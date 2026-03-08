@@ -29,7 +29,7 @@
     // Check authentication (30 minute timeout)
     $is_authenticated = isset($_SESSION['server_authenticated']) && 
                         $_SESSION['server_authenticated'] === true && 
-                        (time() - $_SESSION['auth_time'] < 60);
+                        (time() - $_SESSION['auth_time'] < 800);
 
     // If not authenticated, show only the passkey modal
     if (!$is_authenticated):
@@ -153,115 +153,52 @@
     if (isset($_GET['msg'])) { $message = $_GET['msg']; }
     $target_user = isset($_POST['target_user']) ? $_POST['target_user'] : (isset($_GET['uid']) ? $_GET['uid'] : null);
 
-    // --- REDIRECT TO PREVENT FORM RESUBMISSION ON REFRESH ---
-    if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['submit_passkey'])) {
-        // Store POST data in session temporarily if needed
-        // But for now, just redirect to GET to prevent resubmission
-        $redirect_url = $_SERVER['PHP_SELF'] . "?";
-        if ($target_user) {
-            $redirect_url .= "uid=$target_user";
+    // --- SIMPLE DIRECT FIXES FOR DELETE AND UPDATE ---
+    
+    // DIRECT DELETE USER - SIMPLE AND CLEAN
+    if (isset($_POST['delete_user_direct'])) {
+        $user_id = $_POST['user_id'];
+        try {
+            // Simply delete the user row
+            $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+            $stmt->execute([$user_id]);
+            
+            // Redirect with success message
+            header("Location: " . $_SERVER['PHP_SELF'] . "?msg=User deleted successfully");
+            exit();
+        } catch (Exception $e) {
+            $message = "Error deleting user: " . $e->getMessage();
         }
-        if (isset($_GET['edit_receipt'])) {
-            $redirect_url .= "&edit_receipt=" . $_GET['edit_receipt'];
-        }
-        header("Location: $redirect_url");
-        exit();
     }
-
-    // --- HELPER FUNCTIONS ---
-    function generateTransferSentence($amount, $method, $detail) {
-        $sentences = [
-            "A secure allocation of $$amount has been initiated via $method ($detail).",
-            "System confirms the dispatch of $$amount to the registered $method account: $detail.",
-            "Beneficiary payout of $$amount is currently being routed through $method to $detail.",
-            "Financial release of $$amount authorized for external transfer ($method: $detail).",
-            "Processing a transaction of $$amount directed towards $method address $detail."
-        ];
-        return $sentences[array_rand($sentences)];
-    }
-
-    // Robust image path resolver function
-    function resolveImagePath($image_path) {
-        if (empty($image_path)) {
-            return null;
-        }
+    
+    // DIRECT UPDATE USER - SIMPLE AND CLEAN
+    if (isset($_POST['update_user_direct'])) {
+        $user_id = $_POST['user_id'];
+        $fullname = $_POST['full_name'];
+        $username = $_POST['username'];
+        $email = $_POST['email'];
         
-        // If it's already a full URL, return as is
-        if (filter_var($image_path, FILTER_VALIDATE_URL)) {
-            return $image_path;
-        }
-        
-        // Get the base paths
-        $document_root = $_SERVER['DOCUMENT_ROOT'];
-        $script_dir = dirname($_SERVER['SCRIPT_FILENAME']);
-        
-        // Array of possible paths to check
-        $paths_to_try = [];
-        
-        // 1. Try as stored (relative to script)
-        $paths_to_try[] = $image_path;
-        
-        // 2. Try with uploads/ prefix
-        $paths_to_try[] = 'uploads/' . basename($image_path);
-        
-        // 3. Try with ./uploads/ prefix
-        $paths_to_try[] = './uploads/' . basename($image_path);
-        
-        // 4. Try with absolute path from document root
-        $paths_to_try[] = $document_root . '/' . ltrim($image_path, '/');
-        
-        // 5. Try with absolute path from script directory
-        $paths_to_try[] = $script_dir . '/' . $image_path;
-        
-        // 6. Try with uploads directory from document root
-        $paths_to_try[] = $document_root . '/uploads/' . basename($image_path);
-        
-        // 7. Try with the full path as stored
-        if (file_exists($image_path)) {
-            return $image_path;
-        }
-        
-        // Check each path
-        foreach ($paths_to_try as $path) {
-            if (file_exists($path)) {
-                // Convert to web-accessible path
-                if (strpos($path, $document_root) === 0) {
-                    // Remove document root to get web path
-                    $web_path = substr($path, strlen($document_root));
-                    return $web_path;
-                }
-                return $path;
-            }
-        }
-        
-        return null;
-    }
-
-    // Function to get web-accessible image URL
-    function getImageUrl($image_path) {
-        $resolved_path = resolveImagePath($image_path);
-        
-        if ($resolved_path && file_exists($resolved_path)) {
-            // If it's already a URL, return it
-            if (filter_var($resolved_path, FILTER_VALIDATE_URL)) {
-                return $resolved_path;
+        try {
+            if (!empty($_POST['password'])) {
+                // Update with new password
+                $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+                $stmt = $pdo->prepare("UPDATE users SET full_name = ?, username = ?, email = ?, password = ? WHERE id = ?");
+                $stmt->execute([$fullname, $username, $email, $password, $user_id]);
+            } else {
+                // Update without password
+                $stmt = $pdo->prepare("UPDATE users SET full_name = ?, username = ?, email = ? WHERE id = ?");
+                $stmt->execute([$fullname, $username, $email, $user_id]);
             }
             
-            // Get the base URL
-            $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-            $host = $_SERVER['HTTP_HOST'];
-            $base_url = $protocol . $host;
-            
-            // Clean up the path
-            $clean_path = str_replace('//', '/', '/' . ltrim($resolved_path, './'));
-            
-            return $base_url . $clean_path;
+            // Redirect back to the same user
+            header("Location: " . $_SERVER['PHP_SELF'] . "?uid=" . $user_id . "&msg=User updated successfully");
+            exit();
+        } catch (Exception $e) {
+            $message = "Error updating user: " . $e->getMessage();
         }
-        
-        return null;
     }
 
-    // --- SERVER LOGIC ---
+    // --- REST OF YOUR EXISTING SERVER LOGIC ---
     if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         // 1. Create User
@@ -281,39 +218,7 @@
             } catch (Exception $e) { $pdo->rollBack(); $message = "ERROR: " . $e->getMessage(); }
         }
 
-        // 2. Update User Login Details
-        if (isset($_POST['update_login'])) {
-            $uid = $_POST['edit_user_id'];
-            $fullname = $_POST['edit_fullname'];
-            $username = $_POST['edit_username'];
-            $email = $_POST['edit_email'];
-            
-            try {
-                $pdo->beginTransaction();
-                
-                if (!empty($_POST['edit_password'])) {
-                    $password = password_hash($_POST['edit_password'], PASSWORD_DEFAULT);
-                    $stmt = $pdo->prepare("UPDATE users SET full_name = ?, username = ?, email = ?, password = ? WHERE id = ?");
-                    $stmt->execute([$fullname, $username, $email, $password, $uid]);
-                } else {
-                    $stmt = $pdo->prepare("UPDATE users SET full_name = ?, username = ?, email = ? WHERE id = ?");
-                    $stmt->execute([$fullname, $username, $email, $uid]);
-                }
-                
-                $pdo->commit();
-                header("Location: " . $_SERVER['PHP_SELF'] . "?uid=$uid&msg=Login details updated successfully.");
-                exit();
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                $message = "ERROR: " . $e->getMessage();
-            }
-        }
-
         // 3. Delete User/Asset
-        if (isset($_POST['delete_user'])) {
-            $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$_POST['del_id']]);
-            header("Location: " . $_SERVER['PHP_SELF'] . "?msg=User Deleted."); exit();
-        }
         if (isset($_POST['delete_asset'])) {
             $stmt = $pdo->prepare("SELECT image_path FROM portfolio_assets WHERE id = ?");
             $stmt->execute([$_POST['asset_id']]);
@@ -1685,7 +1590,7 @@
             <input type="hidden" name="tx_id" id="modalTxId" value="">
             <input type="hidden" name="asset_id" id="modalAssetId" value="">
             <input type="hidden" name="receipt_id" id="modalReceiptId" value="">
-            <input type="hidden" name="del_id" id="modalUserId" value="">
+            <input type="hidden" name="user_id" id="modalUserId" value="">
             <input type="hidden" name="target_user" id="modalTargetUser" value="<?php echo $target_user; ?>">
             <div class="modal-btns">
                 <button type="button" onclick="closeModal()" style="background:#cbd5e1; color:var(--dark);">Cancel</button>
@@ -1695,43 +1600,42 @@
     </div>
 </div>
 
-<!-- Profile Edit Modal -->
+<!-- Profile Edit Modal - SIMPLE DIRECT FORM -->
 <div id="profileModal">
     <div class="profile-modal-content">
         <div class="profile-header">
             <div class="avatar"><?php echo strtoupper(substr($selected_user['full_name'] ?? 'U', 0, 1)); ?></div>
-            <h3>Edit Login Details</h3>
+            <h3>Edit User Details</h3>
         </div>
         
         <?php if($selected_user): ?>
         <form method="POST">
-            <input type="hidden" name="edit_user_id" value="<?php echo $selected_user['id']; ?>">
-            <input type="hidden" name="target_user" value="<?php echo $target_user; ?>">
+            <input type="hidden" name="user_id" value="<?php echo $selected_user['id']; ?>">
             
             <div class="form-row">
                 <label>Full Name</label>
-                <input type="text" name="edit_fullname" value="<?php echo htmlspecialchars($selected_user['full_name']); ?>" required>
+                <input type="text" name="full_name" value="<?php echo htmlspecialchars($selected_user['full_name']); ?>" required>
             </div>
             
             <div class="form-row">
                 <label>Username</label>
-                <input type="text" name="edit_username" value="<?php echo htmlspecialchars($selected_user['username']); ?>" required>
+                <input type="text" name="username" value="<?php echo htmlspecialchars($selected_user['username']); ?>" required>
             </div>
             
             <div class="form-row">
                 <label>Email Address</label>
-                <input type="email" name="edit_email" value="<?php echo htmlspecialchars($selected_user['email']); ?>" required>
+                <input type="email" name="email" value="<?php echo htmlspecialchars($selected_user['email']); ?>" required>
             </div>
             
             <div class="form-row">
                 <label>New Password (leave blank to keep current)</label>
-                <input type="password" name="edit_password" placeholder="Enter new password">
+                <input type="password" name="password" placeholder="Enter new password">
                 <div class="password-hint">Leave empty to keep current password</div>
             </div>
             
             <div class="modal-btns">
                 <button type="button" onclick="closeProfileModal()" style="background:#cbd5e1; color:var(--dark);">Cancel</button>
-                <button type="submit" name="update_login" style="background:var(--accent);">Save Changes</button>
+                <button type="submit" name="update_user_direct" style="background:var(--accent);">Save Changes</button>
             </div>
         </form>
         <?php endif; ?>
@@ -2325,7 +2229,7 @@
         document.getElementById('modalMsg').innerText = "Delete account for " + name + "?";
         document.getElementById('modalUserId').value = id;
         const confirmBtn = document.getElementById('modalConfirmBtn');
-        confirmBtn.name = "delete_user";
+        confirmBtn.name = "delete_user_direct";
         confirmBtn.style.background = "var(--danger)";
         confirmBtn.textContent = "Delete User";
         document.getElementById('customModal').style.display = "flex";
