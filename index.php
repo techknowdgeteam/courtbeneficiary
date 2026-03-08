@@ -46,12 +46,27 @@
         return $sentences[array_rand($sentences)];
     }
 
-    // Function to resolve image paths
-    function resolveImagePath($image_path) {
+    // Function to get user-specific upload path
+    function getUserUploadPath($user_id) {
+        $user_folder = 'uploads/user_' . $user_id;
+        $full_path = __DIR__ . DIRECTORY_SEPARATOR . $user_folder;
+        
+        // Create folder if it doesn't exist
+        if (!file_exists($full_path)) {
+            mkdir($full_path, 0777, true);
+            chmod($full_path, 0777);
+        }
+        
+        return $user_folder;
+    }
+
+    // Function to resolve image paths for user-specific folders
+    function resolveImagePath($image_path, $user_id = null) {
         if (empty($image_path)) {
             return null;
         }
         
+        // If it's already a full URL, return as is
         if (filter_var($image_path, FILTER_VALIDATE_URL)) {
             return $image_path;
         }
@@ -59,21 +74,37 @@
         $document_root = $_SERVER['DOCUMENT_ROOT'];
         $script_dir = dirname($_SERVER['SCRIPT_FILENAME']);
         
+        // Array of possible paths to try
         $paths_to_try = [];
+        
+        // 1. Try the path as stored
         $paths_to_try[] = $image_path;
+        
+        // 2. If we have a user_id, try the user-specific folder path
+        if ($user_id) {
+            $user_folder = 'uploads/user_' . $user_id;
+            $filename = basename($image_path);
+            $paths_to_try[] = $user_folder . '/' . $filename;
+            $paths_to_try[] = './' . $user_folder . '/' . $filename;
+            $paths_to_try[] = $document_root . '/' . $user_folder . '/' . $filename;
+            $paths_to_try[] = $script_dir . '/' . $user_folder . '/' . $filename;
+        }
+        
+        // 3. Try with uploads/ prefix (legacy)
         $paths_to_try[] = 'uploads/' . basename($image_path);
         $paths_to_try[] = './uploads/' . basename($image_path);
+        
+        // 4. Try with absolute paths
         $paths_to_try[] = $document_root . '/' . ltrim($image_path, '/');
         $paths_to_try[] = $script_dir . '/' . $image_path;
         $paths_to_try[] = $document_root . '/uploads/' . basename($image_path);
         
-        if (file_exists($image_path)) {
-            return $image_path;
-        }
-        
+        // Check each path
         foreach ($paths_to_try as $path) {
             if (file_exists($path)) {
+                // Convert to web-accessible path
                 if (strpos($path, $document_root) === 0) {
+                    // Remove document root to get web path
                     $web_path = substr($path, strlen($document_root));
                     return $web_path;
                 }
@@ -84,18 +115,22 @@
         return null;
     }
 
-    // Function to get web-accessible image URL
-    function getImageUrl($image_path) {
-        $resolved_path = resolveImagePath($image_path);
+    // Function to get web-accessible image URL with user_id support
+    function getImageUrl($image_path, $user_id = null) {
+        $resolved_path = resolveImagePath($image_path, $user_id);
         
         if ($resolved_path && file_exists($resolved_path)) {
+            // If it's already a URL, return it
             if (filter_var($resolved_path, FILTER_VALIDATE_URL)) {
                 return $resolved_path;
             }
             
+            // Get the base URL
             $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
             $host = $_SERVER['HTTP_HOST'];
             $base_url = $protocol . $host;
+            
+            // Clean up the path
             $clean_path = str_replace('//', '/', '/' . ltrim($resolved_path, './'));
             
             return $base_url . $clean_path;
@@ -1964,7 +1999,7 @@
                         <?php endif; ?>
                     </div>
 
-                    <!-- Right: Portfolio Assets (Scrollable with hidden scrollbar) -->
+                    <!-- Right: Portfolio Assets (Scrollable with hidden scrollbar) - FIXED: Now using user_id for image paths -->
                     <div class="card">
                         <h3>SCHEDULE A · ESTATE ASSETS</h3>
                         <?php if(empty($assets)): ?>
@@ -1975,7 +2010,8 @@
                             <div class="portfolio-container">
                                 <div class="asset-grid">
                                     <?php foreach($assets as $asset): 
-                                        $image_url = getImageUrl($asset['image_path'] ?? '');
+                                        // FIXED: Pass user_id to getImageUrl function
+                                        $image_url = getImageUrl($asset['image_path'] ?? '', $user_id);
                                     ?>
                                         <div class="asset-item">
                                             <?php if($image_url): ?>
