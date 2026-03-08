@@ -1,0 +1,94 @@
+CREATE TABLE users (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    full_name VARCHAR(100) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE inheritance_accounts (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(11),
+    total_amount DECIMAL(15,2) DEFAULT 100000.00,
+    processed_amount DECIMAL(15,2) DEFAULT 20000.00,
+    in_process_balance DECIMAL(15,2) DEFAULT 0.00,
+    available_balance DECIMAL(15,2) DEFAULT 20000.00,
+    withdrawal_status VARCHAR(100) DEFAULT NULL,
+    legal_representative VARCHAR(255) DEFAULT NULL,
+    next_withdrawal_date DATE DEFAULT NULL,
+    message TEXT,
+    testator VARCHAR(255) DEFAULT NULL,
+    maximum_withdrawal_amount DECIMAL(15,2) DEFAULT NULL,
+    court_letter_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+    court_letter_number VARCHAR(100) DEFAULT NULL,
+    court_letter_date DATE DEFAULT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE court_letters (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(11),
+    letter_number VARCHAR(100) DEFAULT NULL,
+    letter_date DATE DEFAULT NULL,
+    letter_type VARCHAR(50) DEFAULT NULL,
+    description TEXT,
+    status ENUM('active', 'archived') DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE withdrawals (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(11),
+    amount DECIMAL(15,2) NOT NULL,
+    withdrawal_type ENUM('domestic', 'international') DEFAULT 'domestic',
+    status ENUM('pending', 'processing', 'completed', 'cancelled') DEFAULT 'pending',
+    estimated_completion DATE DEFAULT NULL,
+    request_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    processed_date DATE DEFAULT NULL,
+    refund_requested TINYINT(1) DEFAULT 0,
+    refund_date DATE DEFAULT NULL,
+    notes TEXT
+);
+
+CREATE TABLE payments_receipt (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(11) NOT NULL,
+    paid_date DATE NOT NULL,
+    amount_paid DECIMAL(15,2) NOT NULL,
+    payer_name VARCHAR(255) NOT NULL,
+    receiver_name VARCHAR(255) NOT NULL,
+    payment_subject VARCHAR(500) NOT NULL,
+    payment_due DECIMAL(15,2) NOT NULL,
+    total_payment DECIMAL(15,2) NOT NULL,
+    reference_number VARCHAR(100) DEFAULT NULL,
+    status ENUM('pending', 'completed', 'failed', 'refunded') DEFAULT 'completed',
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE transaction_history (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(11),
+    transaction_type ENUM('withdrawal', 'deposit', 'processed', 'refund') NOT NULL,
+    amount DECIMAL(15,2) NOT NULL,
+    status VARCHAR(50) DEFAULT NULL,
+    description TEXT,
+    transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reference_number VARCHAR(100) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE portfolio_assets (
+    id INT(11) AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(11),
+    asset_title VARCHAR(255) NOT NULL,
+    asset_description TEXT,
+    image_path VARCHAR(255) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE server_passkey (
+    password VARCHAR(255) NOT NULL
+);
