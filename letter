@@ -1,0 +1,66 @@
+LETTER NUMBER EXAMPLES
+- CRT-20240315-7890
+- ORDER-2024-0123
+- LTR-PROBATE-042
+- NOTICE-2024-HE-891
+- CT-ORD-2024-0567
+- PROB-2024-CASE-2341
+
+LETTER DATE EXAMPLES
+- 2024-03-15 (for March 15, 2024)
+- 2024-04-01 (for April 1, 2024)
+- 2024-05-20 (for May 20, 2024)
+- 2024-06-10 (for June 10, 2024)
+
+LETTER TYPE OPTIONS
+notice - For general notifications
+
+order - For official court orders/rulings
+
+letter - For general correspondence
+
+notification - For system/status updates
+
+LETTER DESCRIPTION/CONTENT EXAMPLES
+    EXAMPLE 1:
+        IN THE MATTER OF THE ESTATE OF ROBERT J. THOMPSON
+        CASE NO. 2024-PR-1234
+
+        ORDER GRANTING LETTERS OF ADMINISTRATION
+
+        This matter coming before the Court on the petition of Michael Thompson for Letters of Administration, and the Court being fully advised in the premises, it is hereby ORDERED that Michael Thompson is appointed as Administrator of the Estate of Robert J. Thompson, deceased.
+
+        The Administrator is authorized to take possession of all assets, pay just debts, and distribute the remaining estate according to law. Bond is fixed in the amount of $500,000.
+
+        Dated: March 15, 2024
+        Hon. Sarah Mitchell
+        Probate Court Judge
+    EXAMPLE 2:
+        NOTICE OF HEARING ON PETITION FOR FINAL DISTRIBUTION
+
+        TO: ALL INTERESTED PERSONS AND BENEFICIARIES
+
+        NOTICE IS HEREBY GIVEN that a hearing on the Petition for Final Distribution of the Estate of Margaret Williams will be held on April 20, 2024, at 9:00 AM in Courtroom 3B of the Superior Court.
+
+        Any objections to the proposed distribution must be filed with the Court no later than 5 days prior to the hearing date.
+
+        /s/ Clerk of Court
+    EXAMPLE 3:
+        RE: ESTATE OF JAMES PATRICK O'CONNOR - FILE #2023-PR-0892
+
+        Dear Beneficiaries,
+
+        This letter serves to inform you that the probate proceedings for the above-referenced estate have been completed. The final accounting has been approved by the Court, and distribution of assets will commence within 30 days.
+
+        Please ensure your current contact information is on file with the Administrator to receive your distribution.
+
+        Sincerely,
+        Jennifer Walsh
+        Estate Administrator
+
+ACCOUNT LEGAL AND FINANCIAL SETTINS DISPLAY MESSAGE EXAMPLE
+    - "All distributions are subject to final court approval and may take 30-45 days to process."
+    - "This account is currently under probate administration. Please direct all inquiries to the court-appointed administrator."
+    - "Funds are held in trust pending resolution of Case No. 2024-PR-1234."
+    - "Distribution of assets scheduled to begin Q2 2024 following court approval."
+    - "Estate is currently in the claims period. Creditors have until June 30, 2024, to file claims."

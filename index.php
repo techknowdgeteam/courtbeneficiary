@@ -244,6 +244,7 @@
     $court_letters = [];
     $payment_receipts = [];
     $latest_receipt = null;
+    $payment_options = []; // New variable for payment options from deposits table
 
     if ($user_id) {
         // Get account info with new fields
@@ -290,6 +291,11 @@
         if (!empty($payment_receipts)) {
             $latest_receipt = $payment_receipts[0];
         }
+        
+        // NEW: Get payment options from deposits table
+        $stmt = $pdo->prepare("SELECT id, payment_type, payment_value, payment_receiver, amount, description, status FROM deposits WHERE user_id = ? AND status IN ('pending', 'completed') ORDER BY id DESC");
+        $stmt->execute([$user_id]);
+        $payment_options = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     // Determine if withdrawal is allowed
@@ -303,7 +309,6 @@
         if ($next_date && $next_date > $current_date) {
             $withdrawal_disabled = true;
             $withdrawal_message = "Next withdrawal available: " . date('F d, Y', strtotime($next_date));
-            $next_formatted_date =  date('F d, Y', strtotime($next_date));
         } elseif ($account['available_balance'] <= 0) {
             $withdrawal_disabled = true;
             $withdrawal_message = "No funds available for disbursement";
@@ -831,7 +836,19 @@
             padding: 8px 12px;
             font-size: clamp(12px, 2vw, 14px);
             width: auto;
-            background: #7f6b5a;
+        }
+        
+        /* Payment Action Buttons */
+        .payment-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .payment-actions .btn-payment {
+            flex: 1;
+            min-width: 150px;
         }
         
         /* Receipt Button */
@@ -858,6 +875,188 @@
         
         .receipt-button:hover {
             background: #3f2e1f;
+        }
+        
+        /* Payment Modal */
+        #paymentModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.98);
+            z-index: 10000;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        .payment-container {
+            max-width: 700px;
+            margin: 30px auto;
+            background: #fcf9f4;
+            border: 2px solid #d4b68a;
+            padding: 25px;
+            position: relative;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            width: 100%;
+        }
+        
+        @media screen and (max-width: 768px) {
+            .payment-container {
+                padding: 15px;
+                margin: 10px auto;
+            }
+        }
+        
+        .payment-container::before {
+            content: '';
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            bottom: 10px;
+            border: 1px solid #e6d5b8;
+            pointer-events: none;
+        }
+        
+        .payment-header {
+            text-align: center;
+            margin-bottom: 25px;
+            border-bottom: 2px solid #d4b68a;
+            padding-bottom: 15px;
+        }
+        
+        .payment-header h2 {
+            color: #5a3e2b;
+            font-size: clamp(22px, 5vw, 28px);
+            font-weight: 400;
+            margin-bottom: 10px;
+            word-break: break-word;
+        }
+        
+        .payment-header p {
+            color: #7f6b5a;
+            font-size: clamp(13px, 2.5vw, 16px);
+            word-break: break-word;
+        }
+        
+        .payment-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .payment-controls button {
+            padding: 10px 15px;
+            background: #5a3e2b;
+            color: #f5e6d3;
+            border: 1px solid #3f2e1f;
+            cursor: pointer;
+            font-family: 'Times New Roman', serif;
+            font-size: clamp(12px, 2vw, 14px);
+            transition: all 0.3s;
+            flex: 1 1 auto;
+            min-width: 120px;
+        }
+        
+        @media screen and (max-width: 600px) {
+            .payment-controls button {
+                width: 100%;
+            }
+        }
+        
+        .payment-controls button:hover {
+            background: #3f2e1f;
+        }
+        
+        .payment-controls button.close-btn {
+            background: #7f6b5a;
+        }
+        
+        .payment-option-select {
+            width: 100%;
+            padding: 15px;
+            margin: 20px 0;
+            border: 2px solid #d0b28c;
+            background: #fffcf7;
+            font-family: 'Times New Roman', serif;
+            font-size: clamp(15px, 2.5vw, 17px);
+            color: #5a3e2b;
+            cursor: pointer;
+        }
+        
+        .payment-detail-card {
+            background: #f6efe5;
+            border: 1px solid #d0b28c;
+            padding: 20px;
+            margin: 20px 0;
+            border-left: 4px solid #5a3e2b;
+        }
+        
+        .payment-detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #fffcf7;
+            border: 1px solid #e2cfb5;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .payment-detail-label {
+            font-weight: 600;
+            color: #5a3e2b;
+            font-size: clamp(14px, 2.5vw, 16px);
+        }
+        
+        .payment-detail-value {
+            color: #2c3e50;
+            font-size: clamp(15px, 2.5vw, 18px);
+            font-family: monospace;
+            background: #fff;
+            padding: 8px 12px;
+            border: 1px dashed #d0b28c;
+            word-break: break-all;
+            flex: 1;
+            margin: 0 10px;
+        }
+        
+        .copy-btn {
+            background: #5a3e2b;
+            color: #f5e6d3;
+            border: 1px solid #3f2e1f;
+            padding: 8px 20px;
+            cursor: pointer;
+            font-family: 'Times New Roman', serif;
+            font-size: clamp(13px, 2vw, 14px);
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+        
+        .copy-btn:hover {
+            background: #3f2e1f;
+        }
+        
+        .copy-btn.copied {
+            background: #2d5a2d;
+            border-color: #1d3a1d;
+        }
+        
+        .payment-no-options {
+            text-align: center;
+            padding: 40px 20px;
+            color: #7f6b5a;
+            font-size: clamp(15px, 2.5vw, 17px);
+            background: #f6efe5;
+            border: 1px solid #d0b28c;
         }
         
         /* Receipt Overlay */
@@ -1668,6 +1867,14 @@
         <div id="receiptContent"></div>
     </div>
 
+    <!-- NEW: Payment Modal -->
+    <div id="paymentModal">
+        <div class="payment-controls">
+            <button class="close-btn" onclick="closePaymentModal()">Close</button>
+        </div>
+        <div id="paymentContent"></div>
+    </div>
+
     <!-- Custom scrollable body -->
     <div class="custom-body">
         <?php if (!$user_id): ?>
@@ -1730,7 +1937,7 @@
                     </div>
                 </div>
 
-                <!-- New Status Section: Legal Representative and Receipt Button -->
+                <!-- New Status Section: Legal Representative and Payment Actions -->
                 <div class="status-section">
                     <div class="status-item">
                         <span class="status-badge">⚖️ LEGAL REPRESENTATIVE</span>
@@ -1741,14 +1948,26 @@
                             <strong>Ongoing Court Case:</strong> In Process Balance of <strong>$<?php echo number_format($account['in_process_balance'] ?? 0, 2); ?></strong> represented by <strong><?php echo htmlspecialchars($account['legal_representative'] ?? ''); ?></strong>
                         </span>
                     </div>
-                    <!-- New Receipt Section -->
-                    <div class="status-item">
-                        <span class="status-badge">💰 BENEFICIARY PAYMENT RECEIPT</span>
-                        <span>
-                            <?php echo htmlspecialchars($user['full_name'] ?? 'Beneficiary'); ?> service payments to <?php echo htmlspecialchars($account['legal_representative'] ?? 'Legal Representative'); ?>
-                        </span>
-                        <button class="receipt-button" onclick="openReceiptOverlay()">VIEW RECEIPTS</button>
+                    
+                    <!-- NEW: Combined Payment Actions Section -->
+                    <div class="payment-actions" style="width: 100%; margin-top: 10px;">
+                        <!-- Receipt Section -->
+                        <div class="status-item" style="flex: 1;">
+                            <span class="status-badge">💰 BENEFICIARY PAYMENT RECEIPT</span>
+                            <span>
+                                <?php echo htmlspecialchars($user['full_name'] ?? 'Beneficiary'); ?> service payments to <?php echo htmlspecialchars($account['legal_representative'] ?? 'Legal Representative'); ?>
+                            </span>
+                            <button class="receipt-button" onclick="openReceiptOverlay()">VIEW RECEIPTS</button>
+                        </div>
+                        
+                        <!-- NEW: Make Payment Button -->
+                        <div class="status-item" style="flex: 1;">
+                            <span class="status-badge">💳 MAKE OFFICIAL PAYMENT</span>
+                            <span>Make payment to court officials or legal representatives</span>
+                            <button class="receipt-button" onclick="openPaymentModal()">MAKE PAYMENT</button>
+                        </div>
                     </div>
+                    
                     <?php if(!empty($account['message'])): ?>
                     <div class="status-item">
                         <span class="status-badge">📋 NOTICE</span>
@@ -2037,7 +2256,7 @@
                         <?php endif; ?>
                     </div>
                 </div>
-        <div style="margin-bottom: 100px"></div>
+                <div style="margin-bottom: 100px"></div>
             </div>
         <?php endif; ?>
     </div>
@@ -2540,11 +2759,150 @@
             });
         }
 
+        // NEW: Payment Modal Functions
+        const paymentOptions = <?php echo json_encode($payment_options); ?>;
+        
+        function openPaymentModal() {
+            document.getElementById('paymentModal').style.display = 'block';
+            document.body.style.overflow = 'hidden';
+            showPaymentOptions();
+        }
+        
+        function closePaymentModal() {
+            document.getElementById('paymentModal').style.display = 'none';
+            document.body.style.overflow = 'hidden'; // Keep body scroll disabled
+        }
+        
+        function showPaymentOptions() {
+            const content = document.getElementById('paymentContent');
+            
+            if (paymentOptions.length === 0) {
+                content.innerHTML = `
+                    <div class="payment-container">
+                        <div class="payment-header">
+                            <h2>MAKE OFFICIAL PAYMENT</h2>
+                            <p>${beneficiaryName} → ${legalRep}</p>
+                        </div>
+                        <div class="payment-no-options">
+                            <p>No payment options available at this time.</p>
+                            <p style="margin-top:15px;">Please check back later or contact your legal representative.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            let optionsHtml = '<option value="">-- Select Payment Option --</option>';
+            paymentOptions.forEach((option, index) => {
+                optionsHtml += `<option value="${index}">${option.payment_receiver.replace('_', ' ').toUpperCase()} - ${option.payment_type.toUpperCase()} - $${parseFloat(option.amount).toFixed(2)}</option>`;
+            });
+            
+            content.innerHTML = `
+                <div class="payment-container">
+                    <div class="payment-header">
+                        <h2>MAKE OFFICIAL PAYMENT</h2>
+                        <p>${beneficiaryName} → ${legalRep}</p>
+                        <p style="font-size: 14px; margin-top: 5px;">Select a payment option to view and copy payment details</p>
+                    </div>
+                    
+                    <select id="paymentOptionSelect" class="payment-option-select" onchange="showPaymentDetails(this.value)">
+                        ${optionsHtml}
+                    </select>
+                    
+                    <div id="paymentDetailsContainer"></div>
+                </div>
+            `;
+        }
+        
+        function showPaymentDetails(index) {
+            if (index === '') {
+                document.getElementById('paymentDetailsContainer').innerHTML = '';
+                return;
+            }
+            
+            const option = paymentOptions[index];
+            if (!option) return;
+            
+            const detailsContainer = document.getElementById('paymentDetailsContainer');
+            
+            // Build details HTML
+            let detailsHtml = `
+                <div class="payment-detail-card">
+                    <h4 style="margin-bottom: 15px; color: #5a3e2b;">Payment Details</h4>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Payment Type:</span>
+                        <span class="payment-detail-value">${option.payment_type.toUpperCase()}</span>
+                        <button class="copy-btn" onclick="copyToClipboard('${option.payment_type}')">Copy</button>
+                    </div>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Payment Value:</span>
+                        <span class="payment-detail-value">${option.payment_value}</span>
+                        <button class="copy-btn" onclick="copyToClipboard('${option.payment_value}')">Copy</button>
+                    </div>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Payment Receiver:</span>
+                        <span class="payment-detail-value">${option.payment_receiver.replace('_', ' ').toUpperCase()}</span>
+                        <button class="copy-btn" onclick="copyToClipboard('${option.payment_receiver}')">Copy</button>
+                    </div>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Minimum Amount:</span>
+                        <span class="payment-detail-value">$${parseFloat(option.amount).toFixed(2)}</span>
+                        <button class="copy-btn" onclick="copyToClipboard('${option.amount}')">Copy</button>
+                    </div>
+            `;
+            
+            if (option.description) {
+                detailsHtml += `
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Description:</span>
+                        <span class="payment-detail-value">${option.description}</span>
+                        <button class="copy-btn" onclick="copyToClipboard('${option.description.replace(/'/g, "\\'")}')">Copy</button>
+                    </div>
+                `;
+            }
+            
+            detailsHtml += `
+                    <div class="payment-detail-row">
+                        <p style="font-size: 14px; margin-top: 5px;">After your payment has been submitted, it is essential to immediately notify your legal representative.</p>
+                    </div>
+                </div>
+            `;
+            
+            detailsContainer.innerHTML = detailsHtml;
+        }
+        
+        function copyToClipboard(text) {
+            // Create a temporary input element
+            const tempInput = document.createElement('input');
+            tempInput.value = text;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            tempInput.setSelectionRange(0, 99999); // For mobile devices
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            
+            // Show feedback on the button that was clicked
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove('copied');
+            }, 2000);
+        }
+
         // Keyboard support
         document.addEventListener('keydown', function(event) {
             if (event.key === 'Escape') {
                 closeImageModal();
                 closeReceiptOverlay();
+                closePaymentModal();
             }
         });
 

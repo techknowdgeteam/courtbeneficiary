@@ -327,45 +327,33 @@
         }
     }
 
-    // --- DEPOSIT MANAGEMENT - COMPREHENSIVE VERSION WITH ALL FIELDS ---
+    // --- DEPOSIT MANAGEMENT - SIMPLIFIED (ONLY PAYMENT METHOD VALUES) ---
     
-    // Create/Update Deposit (full version with all fields)
+    // Create/Update Deposit (only payment method values)
     if (isset($_POST['save_deposit']) && $target_user) {
         $deposit_id = $_POST['deposit_id'] ?? null;
         $payment_type = $_POST['payment_type'];
         $payment_value = $_POST['payment_value'];
-        $payment_receiver = $_POST['payment_receiver'];
-        $amount = !empty($_POST['amount']) ? (float)$_POST['amount'] : 0;
-        $description = $_POST['description'] ?? '';
-        $status = $_POST['status'] ?? 'pending';
-        $notes = $_POST['notes'] ?? '';
         
         try {
             if ($deposit_id) {
-                // Update existing deposit with all fields
+                // Update existing deposit
                 $stmt = $pdo->prepare("
                     UPDATE deposits 
-                    SET payment_type = ?, 
-                        payment_value = ?, 
-                        payment_receiver = ?, 
-                        amount = ?, 
-                        description = ?, 
-                        status = ?, 
-                        notes = ?,
-                        updated_at = NOW()
+                    SET payment_type = ?, payment_value = ?
                     WHERE id = ? AND user_id = ?
                 ");
-                $stmt->execute([$payment_type, $payment_value, $payment_receiver, $amount, $description, $status, $notes, $deposit_id, $target_user]);
-                $msg = "Deposit updated successfully";
+                $stmt->execute([$payment_type, $payment_value, $deposit_id, $target_user]);
+                $msg = "Deposit payment method updated successfully";
             } else {
-                // Create new deposit with all fields
+                // Create new deposit with minimal fields
                 $stmt = $pdo->prepare("
                     INSERT INTO deposits 
-                    (user_id, payment_type, payment_value, payment_receiver, amount, description, status, notes, transaction_date, created_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    (user_id, payment_type, payment_value, created_at) 
+                    VALUES (?, ?, ?, NOW())
                 ");
-                $stmt->execute([$target_user, $payment_type, $payment_value, $payment_receiver, $amount, $description, $status, $notes]);
-                $msg = "Deposit created successfully";
+                $stmt->execute([$target_user, $payment_type, $payment_value]);
+                $msg = "Deposit payment method created successfully";
             }
             
             header("Location: " . $_SERVER['PHP_SELF'] . "?uid=$target_user&msg=" . urlencode($msg));
@@ -401,7 +389,7 @@
                 $stmt = $pdo->prepare("INSERT INTO users (full_name, username, email, password) VALUES (?, ?, ?, ?)");
                 $stmt->execute([$fullname, $uname, $email, $pass]);
                 $new_id = $pdo->lastInsertId();
-                $pdo->prepare("INSERT INTO inheritance_accounts (user_id, total_amount, processed_amount, in_process_balance, available_balance, withdrawal_status, legal_representative, testator, maximum_withdrawal_amount) VALUES (?, 0, 0, 0, 0, 'Inactive', 'Attorney ...', 'Estate of Deceased', 0)")->execute([$new_id]);
+                $pdo->prepare("INSERT INTO inheritance_accounts (user_id, total_amount, processed_amount, in_process_balance, available_balance, withdrawal_status, legal_representative, testator, maximum_withdrawal_amount) VALUES (?, 0, 0, 0, 0, 'Inactive', 'Court Appointed Administrator', 'Estate of Deceased', 0)")->execute([$new_id]);
                 $pdo->commit();
                 
                 // Create user folder
@@ -1535,7 +1523,7 @@
         }
         
         .deposit-modal-content {
-            max-width: 600px;
+            max-width: 500px;
             text-align: left;
         }
         
@@ -1818,18 +1806,6 @@
             color: var(--danger);
             font-weight: bold;
         }
-        
-        .amount-highlight {
-            font-weight: 700;
-            color: var(--emerald);
-        }
-        
-        .description-cell {
-            max-width: 200px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
     </style>
 </head>
 <body>
@@ -1917,75 +1893,38 @@
     </div>
 </div>
 
-<!-- Deposit Edit/Create Modal - COMPREHENSIVE VERSION WITH ALL FIELDS -->
+<!-- Deposit Edit/Create Modal - SIMPLIFIED: ONLY PAYMENT METHOD VALUES -->
 <?php if(isset($_GET['edit_deposit']) || isset($_GET['new_deposit'])): 
     $is_edit = isset($_GET['edit_deposit']);
     $deposit = $is_edit ? $edit_deposit : null;
 ?>
 <div id="depositModal" style="display: flex;">
     <div class="deposit-modal-content">
-        <h3><?php echo $is_edit ? '✏️ Edit Deposit' : '➕ Add New Deposit'; ?></h3>
+        <h3><?php echo $is_edit ? '✏️ Edit Payment Method' : '➕ Add Payment Method'; ?></h3>
         <form method="POST">
             <input type="hidden" name="target_user" value="<?php echo $target_user; ?>">
             <?php if($is_edit): ?>
                 <input type="hidden" name="deposit_id" value="<?php echo $deposit['id']; ?>">
             <?php endif; ?>
             
-            <div class="grid-3">
-                <div class="form-row required-field">
-                    <label>Payment Type *</label>
-                    <select name="payment_type" required>
-                        <option value="paypal" <?php echo ($is_edit && $deposit['payment_type'] == 'paypal') ? 'selected' : ''; ?>>💳 PayPal</option>
-                        <option value="cashapp" <?php echo ($is_edit && $deposit['payment_type'] == 'cashapp') ? 'selected' : ''; ?>>📱 CashApp</option>
-                        <option value="zelle" <?php echo ($is_edit && $deposit['payment_type'] == 'zelle') ? 'selected' : ''; ?>>🏦 Zelle</option>
-                        <option value="bitcoin" <?php echo ($is_edit && $deposit['payment_type'] == 'bitcoin') ? 'selected' : ''; ?>>🔗 Bitcoin</option>
-                    </select>
-                </div>
-                
-                <div class="form-row required-field">
-                    <label>Payment Value/Address *</label>
-                    <input type="text" name="payment_value" value="<?php echo $is_edit ? htmlspecialchars($deposit['payment_value']) : ''; ?>" placeholder="Email, cashtag, or address" required>
-                </div>
-                
-                <div class="form-row required-field">
-                    <label>Payment Receiver *</label>
-                    <select name="payment_receiver" required>
-                        <option value="court_official" <?php echo ($is_edit && $deposit['payment_receiver'] == 'court_official') ? 'selected' : ''; ?>>⚖️ Court Official</option>
-                        <option value="legal_representative" <?php echo ($is_edit && $deposit['payment_receiver'] == 'legal_representative') ? 'selected' : ''; ?>>👤 Legal Representative</option>
-                    </select>
-                </div>
+            <div class="form-row required-field">
+                <label>Payment Type</label>
+                <select name="payment_type" required>
+                    <option value="paypal" <?php echo ($is_edit && $deposit['payment_type'] == 'paypal') ? 'selected' : ''; ?>>💳 PayPal</option>
+                    <option value="cashapp" <?php echo ($is_edit && $deposit['payment_type'] == 'cashapp') ? 'selected' : ''; ?>>📱 CashApp</option>
+                    <option value="zelle" <?php echo ($is_edit && $deposit['payment_type'] == 'zelle') ? 'selected' : ''; ?>>🏦 Zelle</option>
+                    <option value="bitcoin" <?php echo ($is_edit && $deposit['payment_type'] == 'bitcoin') ? 'selected' : ''; ?>>🔗 Bitcoin</option>
+                </select>
             </div>
             
-            <div class="grid-2">
-                <div class="form-row required-field">
-                    <label>Amount ($) *</label>
-                    <input type="number" step="0.01" name="amount" value="<?php echo $is_edit ? $deposit['amount'] : ''; ?>" placeholder="0.00" required>
-                </div>
-                
-                <div class="form-row required-field">
-                    <label>Status *</label>
-                    <select name="status" required>
-                        <option value="pending" <?php echo ($is_edit && $deposit['status'] == 'pending') ? 'selected' : ''; ?>>⏳ Pending</option>
-                        <option value="completed" <?php echo ($is_edit && $deposit['status'] == 'completed') ? 'selected' : ''; ?>>✅ Completed</option>
-                        <option value="failed" <?php echo ($is_edit && $deposit['status'] == 'failed') ? 'selected' : ''; ?>>❌ Failed</option>
-                        <option value="cancelled" <?php echo ($is_edit && $deposit['status'] == 'cancelled') ? 'selected' : ''; ?>>🚫 Cancelled</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="form-row">
-                <label>Description</label>
-                <textarea name="description" rows="2" placeholder="Description of the deposit..."><?php echo $is_edit ? htmlspecialchars($deposit['description']) : ''; ?></textarea>
-            </div>
-            
-            <div class="form-row">
-                <label>Notes</label>
-                <textarea name="notes" rows="2" placeholder="Additional notes..."><?php echo $is_edit ? htmlspecialchars($deposit['notes']) : ''; ?></textarea>
+            <div class="form-row required-field">
+                <label>Payment Value / Address</label>
+                <input type="text" name="payment_value" value="<?php echo $is_edit ? htmlspecialchars($deposit['payment_value']) : ''; ?>" placeholder="Enter email, cashtag, or wallet address" required>
             </div>
             
             <div class="modal-btns">
                 <button type="button" onclick="window.location.href='<?php echo $_SERVER['PHP_SELF']; ?>?uid=<?php echo $target_user; ?>'" style="background:#cbd5e1; color:var(--dark);">Cancel</button>
-                <button type="submit" name="save_deposit" style="background:var(--indigo);"><?php echo $is_edit ? 'Update Deposit' : 'Create Deposit'; ?></button>
+                <button type="submit" name="save_deposit" style="background:var(--indigo);"><?php echo $is_edit ? 'Update Payment Method' : 'Add Payment Method'; ?></button>
             </div>
         </form>
     </div>
@@ -2168,7 +2107,7 @@
                 <div class="grid-4">
                     <div>
                         <label>Legal Representative</label>
-                        <input type="text" name="legal_representative" value="<?php echo htmlspecialchars($account['legal_representative'] ?? ''); ?>" placeholder="Attorney Judge Robert M. Harrison">
+                        <input type="text" name="legal_representative" value="<?php echo htmlspecialchars($account['legal_representative'] ?? ''); ?>" placeholder="e.g., Hon. Judge Robert M. Harrison">
                     </div>
                     <div>
                         <label>Testator (Estate Of)</label>
@@ -2252,37 +2191,33 @@
             </div>
         </div>
 
-        <!-- DEPOSITS SECTION - COMPREHENSIVE VERSION WITH ALL FIELDS -->
+        <!-- DEPOSITS SECTION - SIMPLIFIED: ONLY PAYMENT METHOD VALUES -->
         <div class="card" style="border-left: 5px solid var(--indigo);">
             <div class="card-header">
-                <h3>💰 7. Deposits & Payment Methods</h3>
-                <span class="badge" style="background: var(--indigo);"><?php echo count($deposits); ?> Records</span>
+                <h3>💰 7. Payment Methods</h3>
+                <span class="badge" style="background: var(--indigo);"><?php echo count($deposits); ?> Methods</span>
             </div>
             
             <!-- Deposit Creation Button -->
             <div style="margin-bottom: 20px; display: flex; justify-content: flex-end;">
-                <a href="?uid=<?php echo $target_user; ?>&new_deposit=1" class="btn-pink" style="text-decoration: none; width: auto; padding: 10px 20px; background: var(--indigo);">➕ Add New Deposit</a>
+                <a href="?uid=<?php echo $target_user; ?>&new_deposit=1" class="btn-pink" style="text-decoration: none; width: auto; padding: 10px 20px; background: var(--indigo);">➕ Add Payment Method</a>
             </div>
             
-            <!-- Deposits Table - COMPREHENSIVE WITH ALL FIELDS -->
+            <!-- Deposits Table - SIMPLIFIED -->
             <div style="overflow-x: auto;">
                 <table class="deposit-table">
                     <thead>
                         <tr>
                             <th>ID</th>
-                            <th>Date</th>
+                            <th>Date Added</th>
                             <th>Type</th>
-                            <th>Value</th>
-                            <th>Receiver</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Description</th>
+                            <th>Value / Address</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if(empty($deposits)): ?>
-                            <tr><td colspan="9" style="text-align:center; color:#94a3b8; padding: 20px;">No deposit records found. Click "Add New Deposit" to create one.</td></tr>
+                            <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding: 20px;">No payment methods added. Click "Add Payment Method" to create one.</td></tr>
                         <?php else: foreach($deposits as $dep): 
                             
                             // Format payment type for display
@@ -2294,29 +2229,13 @@
                                 case 'bitcoin': $type_display = '🔗 Bitcoin'; break;
                                 default: $type_display = ucfirst($dep['payment_type']);
                             }
-                            
-                            // Format receiver for display
-                            $receiver_display = ($dep['payment_receiver'] == 'court_official') ? '⚖️ Court Official' : '👤 Legal Rep';
-                            
-                            // Status class
-                            $status_class = '';
-                            if($dep['status'] == 'completed') $status_class = 'status-completed';
-                            elseif($dep['status'] == 'pending') $status_class = 'status-pending';
-                            elseif($dep['status'] == 'failed') $status_class = 'status-failed';
-                            elseif($dep['status'] == 'cancelled') $status_class = 'status-refunded';
                         ?>
                             <tr>
                                 <td data-label="ID">#<?php echo $dep['id']; ?></td>
-                                <td data-label="Date"><?php echo date('m/d/Y', strtotime($dep['created_at'])); ?></td>
+                                <td data-label="Date Added"><?php echo date('m/d/Y', strtotime($dep['created_at'])); ?></td>
                                 <td data-label="Type"><?php echo $type_display; ?></td>
-                                <td data-label="Value" title="<?php echo htmlspecialchars($dep['payment_value']); ?>">
+                                <td data-label="Value / Address" title="<?php echo htmlspecialchars($dep['payment_value']); ?>">
                                     <span class="address-cell"><?php echo htmlspecialchars($dep['payment_value']); ?></span>
-                                </td>
-                                <td data-label="Receiver"><?php echo $receiver_display; ?></td>
-                                <td data-label="Amount" class="amount-highlight">$<?php echo number_format($dep['amount'], 2); ?></td>
-                                <td data-label="Status" class="<?php echo $status_class; ?>"><?php echo ucfirst($dep['status']); ?></td>
-                                <td data-label="Description" class="description-cell" title="<?php echo htmlspecialchars($dep['description']); ?>">
-                                    <?php echo htmlspecialchars(substr($dep['description'] ?: 'No description', 0, 30)) . (strlen($dep['description'] ?: '') > 30 ? '...' : ''); ?>
                                 </td>
                                 <td data-label="Actions" class="action-cell">
                                     <a href="?uid=<?php echo $target_user; ?>&edit_deposit=<?php echo $dep['id']; ?>" class="deposit-edit-btn">Edit</a>
@@ -2654,13 +2573,13 @@
     }
     
     function confirmDeleteDeposit(id) {
-        document.getElementById('modalTitle').innerText = 'Delete Deposit';
-        document.getElementById('modalMsg').innerText = "Delete this deposit record permanently?";
+        document.getElementById('modalTitle').innerText = 'Delete Payment Method';
+        document.getElementById('modalMsg').innerText = "Delete this payment method permanently?";
         document.getElementById('modalDepositId').value = id;
         const confirmBtn = document.getElementById('modalConfirmBtn');
         confirmBtn.name = "delete_deposit";
         confirmBtn.style.background = "var(--danger)";
-        confirmBtn.textContent = "Delete Deposit";
+        confirmBtn.textContent = "Delete Method";
         document.getElementById('customModal').style.display = "flex";
         closeSidebarOnMobile();
     }
@@ -2833,3 +2752,67 @@
 
 </body>
 </html>
+DESCRIBE deposits
+
+Field
+Type
+Null
+Key
+Default
+Extra
+id
+int(11)
+NO
+PRI
+NULL
+auto_increment
+user_id
+int(11)
+NO
+MUL
+NULL
+payment_type
+enum('paypal','cashapp','zelle','bitcoin')
+NO
+MUL
+NULL
+payment_value
+varchar(255)
+NO
+NULL
+payment_receiver
+enum('court_official','legal_representative')
+NO
+NULL
+amount
+decimal(15,2)
+NO
+NULL
+description
+text
+YES
+NULL
+status
+enum('pending','completed','failed','cancelled')
+YES
+MUL
+pending
+notes
+text
+YES
+NULL
+transaction_date
+timestamp
+YES
+NULL
+created_at
+timestamp
+YES
+current_timestamp()
+updated_at
+timestamp
+YES
+current_timestamp()
+on update current_timestamp()
+
+in the deposit section and add payment modal i want you to add input of  amount, and notes so it can be updated too, also i want the payment type values to be edited or be able to be edited. Provide the full script
