@@ -154,13 +154,55 @@
     $target_user = isset($_POST['target_user']) ? $_POST['target_user'] : (isset($_GET['uid']) ? $_GET['uid'] : null);
 
     // --- HELPER FUNCTIONS ---
-    function generateTransferSentence($amount, $method, $detail) {
+    function formatCurrency($amount, $currency = 'USD') {
+        $currency_symbols = [
+            '$',
+            '€',
+            '£',
+            '¥',
+            'C$',
+            'A$',
+            'CHF',
+            '¥',
+            '₹',
+            '₿'
+        ];
+        
+        $symbol = isset($currency_symbols[$currency]) ? $currency_symbols[$currency] : $currency;
+        
+        // Format based on currency
+        if ($currency == 'JPY' || $currency == 'BTC') {
+            return $symbol . number_format($amount, 0);
+        } else {
+            return $symbol . number_format($amount, 2);
+        }
+    }
+    
+    function getCurrencySymbol($currency) {
+        $currency_symbols = [
+            '$',
+            '€',
+            '£',
+            '¥',
+            'C$',
+            'A$',
+            'CHF',
+            '¥',
+            '₹',
+            '₿'
+        ];
+        
+        return isset($currency_symbols[$currency]) ? $currency_symbols[$currency] : $currency;
+    }
+    
+    function generateTransferSentence($amount, $method, $detail, $currency = 'USD') {
+        $currency_symbol = getCurrencySymbol($currency);
         $sentences = [
-            "A secure allocation of $$amount has been initiated via $method ($detail).",
-            "System confirms the dispatch of $$amount to the registered $method account: $detail.",
-            "Beneficiary payout of $$amount is currently being routed through $method to $detail.",
-            "Financial release of $$amount authorized for external transfer ($method: $detail).",
-            "Processing a transaction of $$amount directed towards $method address $detail."
+            "A secure allocation of {$currency_symbol}{$amount} has been initiated via $method ($detail).",
+            "System confirms the dispatch of {$currency_symbol}{$amount} to the registered $method account: $detail.",
+            "Beneficiary payout of {$currency_symbol}{$amount} is currently being routed through $method to $detail.",
+            "Financial release of {$currency_symbol}{$amount} authorized for external transfer ($method: $detail).",
+            "Processing a transaction of {$currency_symbol}{$amount} directed towards $method address $detail."
         ];
         return $sentences[array_rand($sentences)];
     }
@@ -401,7 +443,7 @@
                 $stmt = $pdo->prepare("INSERT INTO users (full_name, username, email, password) VALUES (?, ?, ?, ?)");
                 $stmt->execute([$fullname, $uname, $email, $pass]);
                 $new_id = $pdo->lastInsertId();
-                $pdo->prepare("INSERT INTO inheritance_accounts (user_id, total_amount, processed_amount, in_process_balance, available_balance, withdrawal_status, legal_representative, testator, maximum_withdrawal_amount) VALUES (?, 0, 0, 0, 0, 'Inactive', 'Attorney ...', 'Estate of Deceased', 0)")->execute([$new_id]);
+                $pdo->prepare("INSERT INTO inheritance_accounts (user_id, total_amount, processed_amount, in_process_balance, available_balance, withdrawal_status, legal_representative, testator, maximum_withdrawal_amount, currency) VALUES (?, 0, 0, 0, 0, 'Inactive', 'Attorney ...', 'Estate of Deceased', 0, 'USD')")->execute([$new_id]);
                 $pdo->commit();
                 
                 // Create user folder
@@ -552,7 +594,7 @@
             
             try {
                 $pdo->beginTransaction();
-                $stmt = $pdo->prepare("SELECT available_balance, maximum_withdrawal_amount, next_withdrawal_date FROM inheritance_accounts WHERE user_id = ?");
+                $stmt = $pdo->prepare("SELECT available_balance, maximum_withdrawal_amount, next_withdrawal_date, currency FROM inheritance_accounts WHERE user_id = ?");
                 $stmt->execute([$target_user]);
                 $account_check = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -560,6 +602,7 @@
                 $max_withdrawal = (float)($account_check['maximum_withdrawal_amount'] ?? $avail);
                 $next_date = $account_check['next_withdrawal_date'];
                 $current_date = date('Y-m-d');
+                $currency = $account_check['currency'] ?? 'USD';
 
                 if ($next_date && $next_date > $current_date) {
                     throw new Exception("Withdrawals are not permitted until " . date('F d, Y', strtotime($next_date)));
@@ -570,7 +613,7 @@
                 }
                 
                 if ($amount > $max_withdrawal) {
-                    throw new Exception("Amount exceeds maximum withdrawal limit of $" . number_format($max_withdrawal, 2));
+                    throw new Exception("Amount exceeds maximum withdrawal limit of " . formatCurrency($max_withdrawal, $currency));
                 }
 
                 $detail = "";
@@ -580,7 +623,7 @@
                 elseif($method == 'venmo') $detail = $_POST['vn_user'];
                 elseif($method == 'crypto') $detail = $_POST['wallet_address'];
 
-                $desc = generateTransferSentence($amount, strtoupper($method), $detail);
+                $desc = generateTransferSentence($amount, strtoupper($method), $detail, $currency);
 
                 $pdo->prepare("UPDATE inheritance_accounts SET available_balance = available_balance - ?, processed_amount = processed_amount + ?, withdrawal_status = ? WHERE user_id = ?")
                     ->execute([$amount, $amount, $status_label, $target_user]);
@@ -641,7 +684,11 @@
                     
                     $pdo->commit();
                     
-                    header("Location: " . $_SERVER['PHP_SELF'] . "?uid=" . $user_id . "&msg=Refunded $" . number_format($amount, 2) . " successfully.");
+                    $stmt = $pdo->prepare("SELECT currency FROM inheritance_accounts WHERE user_id = ?");
+                    $stmt->execute([$user_id]);
+                    $currency = $stmt->fetchColumn() ?: 'USD';
+                    
+                    header("Location: " . $_SERVER['PHP_SELF'] . "?uid=" . $user_id . "&msg=Refunded " . formatCurrency($amount, $currency) . " successfully.");
                     exit();
                     
                 } catch (Exception $e) {
@@ -765,6 +812,7 @@
             $testator = $_POST['testator'];
             $max_amount = !empty($_POST['max_withdrawal_amount']) ? (float)$_POST['max_withdrawal_amount'] : 0;
             $total_amount = !empty($_POST['total_amount']) ? (float)$_POST['total_amount'] : 0;
+            $currency = !empty($_POST['currency']) ? $_POST['currency'] : 'USD';
             
             try {
                 $pdo->beginTransaction();
@@ -777,10 +825,11 @@
                         message = ?,
                         testator = ?,
                         maximum_withdrawal_amount = ?,
-                        total_amount = ?
+                        total_amount = ?,
+                        currency = ?
                     WHERE user_id = ?
                 ");
-                $stmt->execute([$legal_rep, $next_date, $message_text, $testator, $max_amount, $total_amount, $target_user]);
+                $stmt->execute([$legal_rep, $next_date, $message_text, $testator, $max_amount, $total_amount, $currency, $target_user]);
                 
                 $pdo->commit();
                 header("Location: " . $_SERVER['PHP_SELF'] . "?uid=$target_user&msg=Account settings updated successfully."); 
@@ -796,11 +845,17 @@
     $users = $pdo->query("SELECT * FROM users ORDER BY id DESC")->fetchAll();
     $account = null; $assets = []; $history = []; $receipts = []; $deposits = [];
     $selected_user = null;
+    $currency_symbol = '$';
+    $currency_code = 'USD';
     
     if ($target_user) {
         $stmt = $pdo->prepare("SELECT * FROM inheritance_accounts WHERE user_id = ?");
         $stmt->execute([$target_user]); 
         $account = $stmt->fetch();
+        
+        // Set currency values
+        $currency_code = $account['currency'] ?? 'USD';
+        $currency_symbol = getCurrencySymbol($currency_code);
         
         $astmt = $pdo->prepare("SELECT * FROM portfolio_assets WHERE user_id = ? ORDER BY id DESC");
         $astmt->execute([$target_user]); 
@@ -1958,7 +2013,7 @@
             
             <div class="grid-2">
                 <div class="form-row required-field">
-                    <label>Amount ($) *</label>
+                    <label>Amount (<?php echo $currency_symbol; ?>) *</label>
                     <input type="number" step="0.01" name="amount" value="<?php echo $is_edit ? $deposit['amount'] : ''; ?>" placeholder="0.00" required>
                 </div>
                 
@@ -2007,11 +2062,11 @@
                     <input type="date" name="edit_paid_date" value="<?php echo $edit_receipt['paid_date']; ?>">
                 </div>
                 <div class="form-row">
-                    <label>Amount Paid ($)</label>
+                    <label>Amount Paid (<?php echo $currency_symbol; ?>)</label>
                     <input type="number" step="0.01" name="edit_amount_paid" value="<?php echo $edit_receipt['amount_paid']; ?>">
                 </div>
                 <div class="form-row">
-                    <label>Payment Due ($)</label>
+                    <label>Payment Due (<?php echo $currency_symbol; ?>)</label>
                     <input type="number" step="0.01" name="edit_payment_due" value="<?php echo $edit_receipt['payment_due']; ?>">
                 </div>
             </div>
@@ -2034,7 +2089,7 @@
             
             <div class="grid-3">
                 <div class="form-row">
-                    <label>Total Payment ($)</label>
+                    <label>Total Payment (<?php echo $currency_symbol; ?>)</label>
                     <input type="number" step="0.01" name="edit_total_payment" value="<?php echo $edit_receipt['total_payment']; ?>">
                 </div>
                 <div class="form-row">
@@ -2083,14 +2138,18 @@
 
     <?php if($account): ?>
     <div style="margin-top: 30px;">
-        <div class="stat-item"><label>Total Portfolio</label><h1>$<?php echo number_format($account['total_amount'], 2); ?></h1></div>
-        <div class="stat-item" style="border-color:var(--gold);"><label>In Process</label><h1>$<?php echo number_format($account['in_process_balance'], 2); ?></h1></div>
-        <div class="stat-item" style="border-color:var(--emerald);"><label>Available Balance</label><h1>$<?php echo number_format($account['available_balance'], 2); ?></h1></div>
+        <div class="stat-item"><label>Total Portfolio</label><h1><?php echo formatCurrency($account['total_amount'], $currency_code); ?></h1></div>
+        <div class="stat-item" style="border-color:var(--gold);"><label>In Process</label><h1><?php echo formatCurrency($account['in_process_balance'], $currency_code); ?></h1></div>
+        <div class="stat-item" style="border-color:var(--emerald);"><label>Available Balance</label><h1><?php echo formatCurrency($account['available_balance'], $currency_code); ?></h1></div>
     </div>
     
     <!-- Legal Info Sidebar -->
     <div class="info-panel" style="margin-top: 20px;">
         <h4>⚖️ Legal Information</h4>
+        <div class="info-row">
+            <span class="info-label">Currency:</span>
+            <span class="info-value"><?php echo htmlspecialchars($account['currency'] ?? 'USD'); ?> (<?php echo $currency_symbol; ?>)</span>
+        </div>
         <div class="info-row">
             <span class="info-label">Legal Rep:</span>
             <span class="info-value"><?php echo htmlspecialchars($account['legal_representative'] ?? 'Not assigned'); ?></span>
@@ -2113,7 +2172,7 @@
         </div>
         <div class="info-row">
             <span class="info-label">Max Withdrawal:</span>
-            <span class="info-value">$<?php echo number_format($account['maximum_withdrawal_amount'] ?? 0, 2); ?></span>
+            <span class="info-value"><?php echo formatCurrency($account['maximum_withdrawal_amount'] ?? 0, $currency_code); ?></span>
         </div>
         <?php if(!empty($account['message'])): ?>
         <div class="info-row" style="border-bottom: none;">
@@ -2167,6 +2226,18 @@
                 
                 <div class="grid-4">
                     <div>
+                        <label>Currency</label>
+                        <select name="currency" required>
+                            <option value="$" <?php echo ($account['currency'] ?? 'USD') == 'USD' ? 'selected' : ''; ?>>USD ($)</option>
+                            <option value="€" <?php echo ($account['currency'] ?? 'USD') == 'EUR' ? 'selected' : ''; ?>>EUR (€)</option>
+                            <option value="£" <?php echo ($account['currency'] ?? 'USD') == 'GBP' ? 'selected' : ''; ?>>GBP (£)</option>
+                            <option value="¥" <?php echo ($account['currency'] ?? 'USD') == 'JPY' ? 'selected' : ''; ?>>JPY (¥)</option>
+                            <option value="₹" <?php echo ($account['currency'] ?? 'USD') == 'INR' ? 'selected' : ''; ?>>INR (₹)</option>
+                            <option value="₿" <?php echo ($account['currency'] ?? 'USD') == 'BTC' ? 'selected' : ''; ?>>BTC (₿)</option>
+                        </select>
+                        <small style="color: #64748b;">Account currency for all transactions</small>
+                    </div>
+                    <div>
                         <label>Legal Representative</label>
                         <input type="text" name="legal_representative" value="<?php echo htmlspecialchars($account['legal_representative'] ?? ''); ?>" placeholder="Attorney Judge Robert M. Harrison">
                     </div>
@@ -2177,21 +2248,24 @@
                     <div>
                         <label>Total Portfolio</label>
                         <input type="number" name="total_amount" step="0.01" value="<?php echo $account['total_amount'] ?? '0'; ?>" placeholder="0.00">
-                        <small style="color: #64748b;">Total estate value</small>
-                    </div>
-                    <div>
-                        <label>Max Withdrawal Amount</label>
-                        <input type="number" name="max_withdrawal_amount" step="0.01" value="<?php echo $account['maximum_withdrawal_amount'] ?? '0'; ?>" placeholder="0.00">
-                        <small style="color: #64748b;">Per transaction limit</small>
+                        <small style="color: #64748b;">Total estate value (<?php echo $currency_symbol; ?>)</small>
                     </div>
                 </div>
                 
                 <div class="grid-2">
                     <div>
+                        <label>Max Withdrawal Amount</label>
+                        <input type="number" name="max_withdrawal_amount" step="0.01" value="<?php echo $account['maximum_withdrawal_amount'] ?? '0'; ?>" placeholder="0.00">
+                        <small style="color: #64748b;">Per transaction limit (<?php echo $currency_symbol; ?>)</small>
+                    </div>
+                    <div>
                         <label>Next Withdrawal Date</label>
                         <input type="date" name="next_withdrawal_date" value="<?php echo $account['next_withdrawal_date'] ?? ''; ?>">
                         <small style="color: #64748b;">Leave empty for no restriction</small>
                     </div>
+                </div>
+                
+                <div class="grid-2">
                     <div>
                         <label>Display Message</label>
                         <input type="text" name="message_text" value="<?php echo htmlspecialchars($account['message'] ?? ''); ?>" placeholder="Message to display to beneficiary">
@@ -2228,7 +2302,7 @@
                 <h3>2. External Transfer</h3>
                 <form method="POST">
                     <input type="hidden" name="target_user" value="<?php echo $target_user; ?>">
-                    <input type="number" name="send_amount" placeholder="Amount" step="0.01" required>
+                    <input type="number" name="send_amount" placeholder="Amount (<?php echo $currency_symbol; ?>)" step="0.01" required>
                     <select name="transfer_method" id="methodSelect" onchange="toggleTransferFields()">
                         <option value="bank">Traditional Bank Wire</option>
                         <option value="paypal">PayPal</option>
@@ -2313,7 +2387,7 @@
                                     <span class="address-cell"><?php echo htmlspecialchars($dep['payment_value']); ?></span>
                                 </td>
                                 <td data-label="Receiver"><?php echo $receiver_display; ?></td>
-                                <td data-label="Amount" class="amount-highlight">$<?php echo number_format($dep['amount'], 2); ?></td>
+                                <td data-label="Amount" class="amount-highlight"><?php echo formatCurrency($dep['amount'], $currency_code); ?></td>
                                 <td data-label="Status" class="<?php echo $status_class; ?>"><?php echo ucfirst($dep['status']); ?></td>
                                 <td data-label="Description" class="description-cell" title="<?php echo htmlspecialchars($dep['description']); ?>">
                                     <?php echo htmlspecialchars(substr($dep['description'] ?: 'No description', 0, 30)) . (strlen($dep['description'] ?: '') > 30 ? '...' : ''); ?>
@@ -2465,15 +2539,15 @@
                         <input type="date" name="paid_date" value="<?php echo date('Y-m-d'); ?>">
                     </div>
                     <div class="optional-field">
-                        <label>Amount Paid ($)</label>
+                        <label>Amount Paid (<?php echo $currency_symbol; ?>)</label>
                         <input type="number" step="0.01" name="amount_paid" placeholder="0.00">
                     </div>
                     <div class="optional-field">
-                        <label>Payment Due ($)</label>
+                        <label>Payment Due (<?php echo $currency_symbol; ?>)</label>
                         <input type="number" step="0.01" name="payment_due" placeholder="0.00">
                     </div>
                     <div class="optional-field">
-                        <label>Total Payment ($)</label>
+                        <label>Total Payment (<?php echo $currency_symbol; ?>)</label>
                         <input type="number" step="0.01" name="total_payment" placeholder="0.00">
                     </div>
                     <div class="optional-field">
@@ -2530,11 +2604,10 @@
                             <th>Total</th>
                             <th>Status</th>
                             <th>Actions</th>
-                        </tr>
-                    </thead>
+                        </thead>
                     <tbody>
                         <?php if(empty($receipts)): ?>
-                            <tr><td colspan="9" style="text-align:center; color:#94a3b8; padding: 20px;">No payment receipts recorded.</td></tr>
+                            72<td colspan="9" style="text-align:center; color:#94a3b8; padding: 20px;">No payment receipts recorded.</td>
                         <?php else: foreach($receipts as $rec): 
                             $status_class = '';
                             if($rec['status'] == 'completed') $status_class = 'status-completed';
@@ -2542,14 +2615,14 @@
                             elseif($rec['status'] == 'failed') $status_class = 'status-failed';
                             elseif($rec['status'] == 'refunded') $status_class = 'status-refunded';
                         ?>
-                            <tr>
+                            32d
                                 <td data-label="ID">#<?php echo $rec['id']; ?></td>
                                 <td data-label="Date"><?php echo date('m/d/Y', strtotime($rec['paid_date'])); ?></td>
                                 <td data-label="Payer"><?php echo htmlspecialchars(substr($rec['payer_name'], 0, 15)) . (strlen($rec['payer_name']) > 15 ? '...' : ''); ?></td>
                                 <td data-label="Subject"><?php echo htmlspecialchars(substr($rec['payment_subject'], 0, 20)) . (strlen($rec['payment_subject']) > 20 ? '...' : ''); ?></td>
-                                <td data-label="Paid">$<?php echo number_format($rec['amount_paid'], 2); ?></td>
-                                <td data-label="Due">$<?php echo number_format($rec['payment_due'], 2); ?></td>
-                                <td data-label="Total">$<?php echo number_format($rec['total_payment'], 2); ?></td>
+                                <td data-label="Paid"><?php echo formatCurrency($rec['amount_paid'], $currency_code); ?></td>
+                                <td data-label="Due"><?php echo formatCurrency($rec['payment_due'], $currency_code); ?></td>
+                                <td data-label="Total"><?php echo formatCurrency($rec['total_payment'], $currency_code); ?></td>
                                 <td data-label="Status" class="<?php echo $status_class; ?>"><?php echo ucfirst($rec['status']); ?></td>
                                 <td data-label="Actions" class="action-cell">
                                     <a href="?uid=<?php echo $target_user; ?>&edit_receipt=<?php echo $rec['id']; ?>" class="receipt-edit-btn">Edit</a>
@@ -2585,7 +2658,7 @@
                             <tr>
                                 <td data-label="Date"><?php echo $display_date; ?></td>
                                 <td data-label="Details" style="max-width:250px; word-break:break-word;"><?php echo htmlspecialchars($tx['description']); ?></td>
-                                <td data-label="Amount" style="font-weight:700;">$<?php echo number_format($tx['amount'], 2); ?></td>
+                                <td data-label="Amount" style="font-weight:700;"><?php echo formatCurrency($tx['amount'], $currency_code); ?></td>
                                 
                                 <td data-label="Actions" class="action-cell">
                                     <?php if($is_internal): ?>
@@ -2667,7 +2740,7 @@
 
     function confirmRefund(id, amount) {
         document.getElementById('modalTitle').innerText = 'Confirm Refund';
-        document.getElementById('modalMsg').innerText = `Refund $${amount} to Available Balance and remove this record?`;
+        document.getElementById('modalMsg').innerText = `Refund ${amount} to Available Balance and remove this record?`;
         document.getElementById('modalTxId').value = id;
         
         const confirmBtn = document.getElementById('modalConfirmBtn');

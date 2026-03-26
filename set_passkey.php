@@ -27,8 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $count = $stmt->fetchColumn();
             
             if ($count > 0) {
-                // Update existing passkey
-                $stmt = $pdo->prepare("UPDATE server_passkey SET password = ? WHERE id = (SELECT id FROM server_passkey LIMIT 1)");
+                // Update existing passkey - since there's no ID column, update the only row
+                $stmt = $pdo->prepare("UPDATE server_passkey SET password = ?");
                 $stmt->execute([$hashed_passkey]);
                 $message = '✅ Passkey updated successfully!';
             } else {
@@ -40,8 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             // Clear any existing sessions to force re-login with new passkey
             if (isset($_POST['clear_sessions']) && $_POST['clear_sessions'] == '1') {
-                // Note: This only affects future sessions, not current ones
-                // For complete session clearing, you'd need to implement session cleanup
                 $message .= ' All sessions will require the new passkey.';
             }
             
@@ -539,41 +537,6 @@ try {
                 alert('Passkey must be at least 6 characters long!');
             }
         });
-        
-        // Toggle password visibility (optional enhancement)
-        function addPasswordToggle() {
-            const passwordFields = document.querySelectorAll('input[type="password"]');
-            passwordFields.forEach(field => {
-                const wrapper = document.createElement('div');
-                wrapper.style.position = 'relative';
-                field.parentNode.insertBefore(wrapper, field);
-                wrapper.appendChild(field);
-                
-                const toggleBtn = document.createElement('button');
-                toggleBtn.type = 'button';
-                toggleBtn.innerHTML = '👁️';
-                toggleBtn.style.position = 'absolute';
-                toggleBtn.style.right = '10px';
-                toggleBtn.style.top = '50%';
-                toggleBtn.style.transform = 'translateY(-50%)';
-                toggleBtn.style.background = 'none';
-                toggleBtn.style.border = 'none';
-                toggleBtn.style.cursor = 'pointer';
-                toggleBtn.style.fontSize = '16px';
-                toggleBtn.style.padding = '5px';
-                
-                toggleBtn.onclick = function() {
-                    const type = field.getAttribute('type') === 'password' ? 'text' : 'password';
-                    field.setAttribute('type', type);
-                    toggleBtn.innerHTML = type === 'password' ? '👁️' : '🔒';
-                };
-                
-                wrapper.appendChild(toggleBtn);
-            });
-        }
-        
-        // Uncomment to add password visibility toggles
-        // window.addEventListener('load', addPasswordToggle);
     </script>
 </body>
 </html>
