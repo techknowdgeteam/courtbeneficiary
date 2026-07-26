@@ -1,0 +1,3750 @@
+<?php
+// bnc.php - Updated with "Send to User" feature and proper max withdrawal limit
+session_start();
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+require 'db.php';
+
+// --- LOGIN LOGIC ---
+if (isset($_POST['login'])) {
+    $username = $_POST['username'];
+    $password = $_POST['password'];
+    
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? OR email = ?");
+    $stmt->execute([$username, $username]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($user && password_verify($password, $user['password'])) {
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['user_name'] = $user['full_name'];
+        $_SESSION['theme_mode'] = $user['theme_mode'] ?? 'white';
+        $_SESSION['security_verified'] = false;
+        
+        // Check if security questions exist and need verification
+        $stmt = $pdo->prepare("SELECT brief_interview FROM users WHERE id = ?");
+        $stmt->execute([$user['id']]);
+        $brief = $stmt->fetchColumn();
+        $questions = $brief ? json_decode($brief, true) : [];
+        
+        if (!empty($questions) && is_array($questions)) {
+            // Reset security question index
+            unset($_SESSION['security_question_index']);
+            header("Location: security_questions.php");
+            exit;
+        } else {
+            // No security questions, mark as verified
+            $_SESSION['security_verified'] = true;
+        }
+        
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit;
+    } else {
+        $login_error = "Invalid username/email or password";
+    }
+}
+
+// --- LOGOUT LOGIC ---
+if (isset($_GET['logout'])) {
+    session_destroy();
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// Check if user is logged in, redirect to security questions if needed
+if (isset($_SESSION['user_id'])) {
+    // Check if we need to redirect to security questions
+    if (!isset($_SESSION['security_verified']) || $_SESSION['security_verified'] !== true) {
+        $stmt = $pdo->prepare("SELECT brief_interview FROM users WHERE id = ?");
+        $stmt->execute([$_SESSION['user_id']]);
+        $brief = $stmt->fetchColumn();
+        $questions = $brief ? json_decode($brief, true) : [];
+        
+        if (!empty($questions) && is_array($questions)) {
+            // If no security_question_index is set, start from beginning
+            if (!isset($_SESSION['security_question_index'])) {
+                $_SESSION['security_question_index'] = 0;
+            }
+            
+            // If not all questions are answered, redirect
+            if ($_SESSION['security_question_index'] < count($questions)) {
+                header("Location: security_questions.php");
+                exit;
+            } else {
+                // All questions answered, mark as verified
+                $_SESSION['security_verified'] = true;
+                unset($_SESSION['security_question_index']);
+            }
+        } else {
+            // No security questions, mark as verified
+            $_SESSION['security_verified'] = true;
+        }
+    }
+}
+
+$user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : null;
+
+// --- HELPER: Random Sentence Generator ---
+function generateTransferSentence($amount, $method, $detail) {
+    return "+ $amount withdrawal initiated on " . date('M d, Y') . " to $method ($detail).";
+}
+
+// --- LOGIC: DECLINE COURT TRANSFER ---
+if (isset($_POST['decline_court_transfer']) && $user_id) {
+    try {
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare("SELECT processed_amount FROM inheritance_accounts WHERE user_id = ?");
+        $stmt->execute([$user_id]);
+        $processed = (float)$stmt->fetchColumn();
+        
+        if ($processed >= 15000) {
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET available_balance = available_balance + 15000, processed_amount = processed_amount - 15000 WHERE user_id = ?");
+            $stmt->execute([$user_id]);
+            
+            $stmt = $pdo->prepare("INSERT INTO transaction_history (user_id, transaction_type, amount, status, description, transaction_date) VALUES (?, 'refund', 15000, 'Completed', 'Court transfer declined; funds returned to available balance', NOW())");
+            $stmt->execute([$user_id]);
+            $pdo->commit();
+            header("Location: " . $_SERVER['PHP_SELF'] . "?msg=Court transfer declined successfully");
+            exit;
+        } else {
+            $error = "No court transfer available to decline";
+        }
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        $error = "Error: " . $e->getMessage();
+    }
+}
+
+// --- LOGIC: PROCESS DEPOSIT ---
+if (isset($_POST['process_deposit']) && $user_id) {
+    $deposit_id = $_POST['deposit_id'];
+    $amount = (float)$_POST['deposit_amount'];
+    $payment_type = $_POST['payment_type'];
+    $payment_value = $_POST['payment_value'];
+    $payment_receiver = $_POST['payment_receiver'];
+    $description = $_POST['description'] ?? '';
+    
+    try {
+        $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
+        $stmt->execute([$user_id]);
+        $user_data = $stmt->fetch(PDO::FETCH_ASSOC);
+        $full_name = $user_data['full_name'] ?? 'Beneficiary';
+        
+        $stmt = $pdo->prepare("
+            INSERT INTO payments_receipt 
+            (user_id, paid_date, amount_paid, payer_name, receiver_name, payment_subject, payment_due, total_payment, reference_number, status, notes, created_at) 
+            VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())
+        ");
+        
+        $reference_number = 'DEP-' . date('Ymd') . '-' . str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        $notes = "Deposit via " . ucfirst($payment_type) . " to " . str_replace('_', ' ', $payment_receiver);
+        
+        $stmt->execute([
+            $user_id,
+            $amount,
+            $full_name,
+            $payment_receiver,
+            'Deposit to ' . ucfirst(str_replace('_', ' ', $payment_receiver)),
+            0,
+            0,
+            $reference_number,
+            $notes
+        ]);
+        
+        $stmt = $pdo->prepare("INSERT INTO transaction_history (user_id, transaction_type, amount, status, description, transaction_date) VALUES (?, 'deposit', ?, 'Pending', ?, NOW())");
+        $stmt->execute([$user_id, $amount, "Deposit of " . number_format($amount, 2) . " via " . ucfirst($payment_type)]);
+        
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=Deposit request submitted successfully!&type=success");
+        exit;
+        
+    } catch (Exception $e) {
+        $error = "Error processing deposit: " . $e->getMessage();
+    }
+}
+
+// --- LOGIC: EXTERNAL WITHDRAWAL ---
+if (isset($_POST['withdraw']) && $user_id) {
+    // Check if passkey is provided and valid
+    $passkey_input = $_POST['passkey'] ?? '';
+    
+    // Get stored passkey
+    $stmt = $pdo->prepare("SELECT passkey FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $stored_passkey = $stmt->fetchColumn();
+    
+    // If passkey exists and doesn't match, show error
+    if (!empty($stored_passkey) && !password_verify($passkey_input, $stored_passkey)) {
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=Sorry, we couldn't complete your withdrawal. You entered an incorrect passkey.&type=error&passkey_error=1");
+        exit;
+    }
+    
+    $amount = (float)$_POST['amount'];
+    $method = $_POST['transfer_method'];
+    $status_label = 'Pending';
+    $receiver_name = $_POST['receiver_name'] ?? 'Beneficiary';
+    $source = $_POST['source'] ?? 'available';
+    $source_label = 'Available Balance';
+    
+    try {
+        $pdo->beginTransaction();
+        
+        // Get account data
+        $stmt = $pdo->prepare("SELECT available_balance, maximum_withdrawal_amount, next_withdrawal_date, currency, wallets FROM inheritance_accounts WHERE user_id = ?");
+        $stmt->execute([$user_id]);
+        $account_check = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        $avail = (float)$account_check['available_balance'];
+        $max_withdrawal = (float)($account_check['maximum_withdrawal_amount'] ?? $avail);
+        $next_date = $account_check['next_withdrawal_date'];
+        $current_date = date('Y-m-d');
+        $currency = $account_check['currency'] ?? '$';
+        $wallets = $account_check['wallets'] ? json_decode($account_check['wallets'], true) : [];
+        if (!is_array($wallets)) $wallets = [];
+        
+        if ($next_date && $next_date > $current_date) {
+            throw new Exception("Withdrawals are not permitted until " . date('F d, Y', strtotime($next_date)));
+        }
+        
+        // Check source and deduct accordingly
+        $source_label = 'Available Balance';
+        if ($source === 'available') {
+            if ($avail < $amount) {
+                throw new Exception("Insufficient available balance. Available: " . $currency . number_format($avail, 2));
+            }
+            if ($amount > $max_withdrawal) {
+                throw new Exception("Amount exceeds maximum withdrawal limit of " . $currency . number_format($max_withdrawal, 2));
+            }
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET available_balance = available_balance - ?, processed_amount = processed_amount + ? WHERE user_id = ?");
+            $stmt->execute([$amount, $amount, $user_id]);
+        } else if (strpos($source, 'wallet_') === 0) {
+            $wallet_index = (int)str_replace('wallet_', '', $source);
+            if (!isset($wallets[$wallet_index])) {
+                throw new Exception("Wallet not found.");
+            }
+            $wallet_balance = (float)$wallets[$wallet_index]['wallet_balance'];
+            $source_label = $wallets[$wallet_index]['wallet_name'] ?? 'Wallet';
+            
+            if ($wallet_balance < $amount) {
+                throw new Exception("Insufficient balance in wallet: " . $source_label . ". Available: " . $currency . number_format($wallet_balance, 2));
+            }
+            if ($amount > $max_withdrawal) {
+                throw new Exception("Amount exceeds maximum withdrawal limit of " . $currency . number_format($max_withdrawal, 2));
+            }
+            
+            // Deduct from wallet
+            $wallets[$wallet_index]['wallet_balance'] = $wallet_balance - $amount;
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET wallets = ?, processed_amount = processed_amount + ? WHERE user_id = ?");
+            $stmt->execute([json_encode($wallets), $amount, $user_id]);
+        } else {
+            throw new Exception("Invalid withdrawal source.");
+        }
+        
+        $detail = "Receiver: $receiver_name | ";
+        if($method == 'bank') {
+            $bank_name = $_POST['b_name'] ?? '';
+            $acc_number = $_POST['b_acc'] ?? '';
+            $routing = $_POST['b_routing'] ?? '';
+            $swift = $_POST['b_swift'] ?? '';
+            
+            $detail .= "Bank: $bank_name | Acc: $acc_number";
+            if (!empty($routing)) $detail .= " | Routing: $routing";
+            if (!empty($swift)) $detail .= " | SWIFT: $swift";
+        } elseif($method == 'paypal') {
+            $detail .= "PayPal: " . $_POST['pp_email'];
+        } elseif($method == 'cashapp') {
+            $detail .= "CashApp: " . $_POST['ca_tag'];
+        } elseif($method == 'venmo') {
+            $detail .= "Venmo: " . $_POST['vn_user'];
+        } elseif($method == 'crypto') {
+            $detail .= "Crypto: " . $_POST['wallet_address'] . " (Chain: " . $_POST['crypto_chain'] . ")";
+        }
+        
+        $desc = "$" . number_format($amount, 2) . " withdrawal from " . $source_label . " to " . strtoupper($method) . " - " . $detail;
+        
+        $stmt = $pdo->prepare("INSERT INTO transaction_history (user_id, transaction_type, amount, status, description, transaction_date) VALUES (?, 'external_transfer', ?, ?, ?, NOW())");
+        $stmt->execute([$user_id, $amount, $status_label, $desc]);
+        
+        $pdo->commit();
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=Transfer initiated successfully! Processing may take up to 10 days.&type=success");
+        exit;
+        
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        $error_message = $e->getMessage();
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=ERROR: " . urlencode($error_message) . "&type=error");
+        exit;
+    }
+}
+
+// --- LOGIC: SEND TO USER ---
+if (isset($_POST['send_to_user']) && $user_id) {
+    // Check passkey
+    $passkey_input = $_POST['passkey'] ?? '';
+    $stmt = $pdo->prepare("SELECT passkey FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $stored_passkey = $stmt->fetchColumn();
+    
+    if (!empty($stored_passkey) && !password_verify($passkey_input, $stored_passkey)) {
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=Sorry, we couldn't complete your transfer. You entered an incorrect passkey.&type=error&passkey_error=1");
+        exit;
+    }
+    
+    $from_bucket = $_POST['from_bucket'];
+    $to_user_id = $_POST['to_user_id'];
+    $to_bucket = $_POST['to_bucket'];
+    $amount = (float)$_POST['send_amount'];
+    $status_label = $_POST['b_status'] ?? 'Completed';
+    
+    try {
+        $pdo->beginTransaction();
+        
+        // Get sender's account
+        $stmt = $pdo->prepare("SELECT total_amount, available_balance, in_process_balance, processed_amount, wallets, currency FROM inheritance_accounts WHERE user_id = ?");
+        $stmt->execute([$user_id]);
+        $sender_account = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$sender_account) throw new Exception("Sender account not found.");
+        
+        // Get receiver's account
+        $stmt = $pdo->prepare("SELECT total_amount, available_balance, in_process_balance, processed_amount, wallets, currency FROM inheritance_accounts WHERE user_id = ?");
+        $stmt->execute([$to_user_id]);
+        $receiver_account = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$receiver_account) throw new Exception("Receiver account not found.");
+        
+        $sender_wallets = !empty($sender_account['wallets']) ? json_decode($sender_account['wallets'], true) : [];
+        if (!is_array($sender_wallets)) $sender_wallets = [];
+        
+        $receiver_wallets = !empty($receiver_account['wallets']) ? json_decode($receiver_account['wallets'], true) : [];
+        if (!is_array($receiver_wallets)) $receiver_wallets = [];
+        
+        $currency = $sender_account['currency'] ?? 'USD';
+        $currency_symbol = getCurrencySymbol($currency);
+        
+        // Determine source bucket and deduct amount
+        $source_label = '';
+        $update_parts = [];
+        $params = [];
+        
+        if (strpos($from_bucket, 'wallet_') === 0) {
+            $wallet_idx = (int)substr($from_bucket, 7);
+            if (!isset($sender_wallets[$wallet_idx])) throw new Exception("Sender wallet not found.");
+            $current_balance = (float)$sender_wallets[$wallet_idx]['wallet_balance'];
+            if ($current_balance < $amount) throw new Exception("Insufficient funds in wallet.");
+            $sender_wallets[$wallet_idx]['wallet_balance'] = $current_balance - $amount;
+            $update_parts[] = "wallets = ?";
+            $params[] = json_encode($sender_wallets);
+            $source_label = $sender_wallets[$wallet_idx]['wallet_name'];
+        } elseif ($from_bucket == 'available_balance') {
+            $current_balance = (float)$sender_account['available_balance'];
+            if ($current_balance < $amount) throw new Exception("Insufficient available balance.");
+            $update_parts[] = "available_balance = available_balance - ?";
+            $params[] = $amount;
+            $source_label = 'Available Balance';
+        } elseif ($from_bucket == 'total_amount') {
+            $current_balance = (float)$sender_account['total_amount'];
+            if ($current_balance < $amount) throw new Exception("Insufficient total amount.");
+            $update_parts[] = "total_amount = total_amount - ?";
+            $params[] = $amount;
+            $source_label = 'Total Portfolio';
+        } elseif ($from_bucket == 'processed_amount') {
+            $current_balance = (float)$sender_account['processed_amount'];
+            if ($current_balance < $amount) throw new Exception("Insufficient processed amount.");
+            $update_parts[] = "processed_amount = processed_amount - ?";
+            $params[] = $amount;
+            $source_label = 'Processed Amount';
+        } else {
+            throw new Exception("Invalid source bucket.");
+        }
+        
+        // Determine destination bucket and add amount
+        $dest_label = '';
+        $receiver_update_parts = [];
+        $receiver_params = [];
+        
+        if (strpos($to_bucket, 'wallet_') === 0) {
+            $wallet_idx = (int)substr($to_bucket, 7);
+            if (!isset($receiver_wallets[$wallet_idx])) throw new Exception("Receiver wallet not found.");
+            $receiver_wallets[$wallet_idx]['wallet_balance'] = (float)$receiver_wallets[$wallet_idx]['wallet_balance'] + $amount;
+            $dest_label = $receiver_wallets[$wallet_idx]['wallet_name'];
+            
+            // Update receiver's wallets
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET wallets = ? WHERE user_id = ?");
+            $stmt->execute([json_encode($receiver_wallets), $to_user_id]);
+            
+        } elseif ($to_bucket == 'available_balance') {
+            $dest_label = 'Available Balance';
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET available_balance = available_balance + ? WHERE user_id = ?");
+            $stmt->execute([$amount, $to_user_id]);
+        } elseif ($to_bucket == 'total_amount') {
+            $dest_label = 'Total Portfolio';
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET total_amount = total_amount + ? WHERE user_id = ?");
+            $stmt->execute([$amount, $to_user_id]);
+        } elseif ($to_bucket == 'processed_amount') {
+            $dest_label = 'Processed Amount';
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET processed_amount = processed_amount + ? WHERE user_id = ?");
+            $stmt->execute([$amount, $to_user_id]);
+        } else {
+            throw new Exception("Invalid destination bucket.");
+        }
+        
+        // Update sender
+        if (!empty($update_parts)) {
+            $setClause = implode(', ', $update_parts);
+            $params[] = $user_id;
+            $stmt = $pdo->prepare("UPDATE inheritance_accounts SET $setClause WHERE user_id = ?");
+            $stmt->execute($params);
+        }
+        
+        // Get receiver name
+        $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
+        $stmt->execute([$to_user_id]);
+        $receiver_name = $stmt->fetchColumn();
+        
+        // Get sender name
+        $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
+        $stmt->execute([$user_id]);
+        $sender_name = $stmt->fetchColumn();
+        
+        // Log sender transaction
+        $sender_desc = "User-to-User Transfer: " . formatCurrency($amount, $currency) . " from $source_label to " . ($receiver_name ?: "User #$to_user_id") . " ($dest_label)";
+        $pdo->prepare("INSERT INTO transaction_history (user_id, transaction_type, amount, status, description, transaction_date) VALUES (?, 'user_transfer', ?, ?, ?, NOW())")
+            ->execute([$user_id, $amount, $status_label, $sender_desc]);
+        
+        // Log receiver transaction
+        $receiver_desc = "Received Transfer: " . formatCurrency($amount, $currency) . " from " . ($sender_name ?: "User #$user_id") . " to $dest_label";
+        $pdo->prepare("INSERT INTO transaction_history (user_id, transaction_type, amount, status, description, transaction_date) VALUES (?, 'user_transfer', ?, 'Received', ?, NOW())")
+            ->execute([$to_user_id, $amount, $receiver_desc]);
+        
+        $pdo->commit();
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=Transfer to user completed successfully.&type=success");
+        exit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=ERROR: " . urlencode($e->getMessage()) . "&type=error");
+        exit;
+    }
+}
+
+// --- HELPER: Format Currency ---
+function formatCurrency($amount, $currency = 'USD') {
+    $currency_symbols = [
+        'USD' => '$',
+        'EUR' => '€',
+        'GBP' => '£',
+        'JPY' => '¥',
+        'CAD' => 'C$',
+        'AUD' => 'A$',
+        'CHF' => 'CHF',
+        'CNY' => '¥',
+        'INR' => '₹',
+        'BTC' => '₿'
+    ];
+    $symbol = isset($currency_symbols[$currency]) ? $currency_symbols[$currency] : $currency;
+    if ($currency == 'JPY' || $currency == 'BTC') {
+        return $symbol . number_format($amount, 0);
+    } else {
+        return $symbol . number_format($amount, 2);
+    }
+}
+
+function getCurrencySymbol($currency) {
+    $currency_symbols = [
+        'USD' => '$',
+        'EUR' => '€',
+        'GBP' => '£',
+        'JPY' => '¥',
+        'CAD' => 'C$',
+        'AUD' => 'A$',
+        'CHF' => 'CHF',
+        'CNY' => '¥',
+        'INR' => '₹',
+        'BTC' => '₿'
+    ];
+    return isset($currency_symbols[$currency]) ? $currency_symbols[$currency] : $currency;
+}
+
+// --- DATA FETCH ---
+$account = null;
+$user = null;
+$transactions = [];
+$withdrawal_transactions = [];
+$deposit_transactions = [];
+$payment_receipts = [];
+$latest_receipt = null;
+$payment_options = [];
+$currency_symbol = '$';
+$currency_code = 'USD';
+$portal_name = 'Bank';
+$theme_mode = 'white';
+$wallets = [];
+$has_passkey = false;
+$all_users = [];
+$max_withdrawal_amount = 0;
+
+if ($user_id) {
+    $stmt = $pdo->prepare("SELECT * FROM inheritance_accounts WHERE user_id = ?");
+    $stmt->execute([$user_id]);
+    $account = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$account) {
+        $stmt = $pdo->prepare("INSERT INTO inheritance_accounts (user_id, total_amount, processed_amount, in_process_balance, available_balance, withdrawal_status, legal_representative, testator, maximum_withdrawal_amount, currency, wallets) VALUES (?, 0, 0, 0, 0, 'Active', 'Pending Assignment', 'Estate of Deceased', 0, '$', '[]')");
+        $stmt->execute([$user_id]);
+        
+        $stmt = $pdo->prepare("SELECT * FROM inheritance_accounts WHERE user_id = ?");
+        $stmt->execute([$user_id]);
+        $account = $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    if ($account && !empty($account['currency'])) {
+        $currency_symbol = $account['currency'];
+        $currency_code = $account['currency'];
+    }
+    
+    // Get max withdrawal amount
+    $max_withdrawal_amount = (float)($account['maximum_withdrawal_amount'] ?? $account['available_balance'] ?? 0);
+    
+    // Parse wallets
+    if (!empty($account['wallets'])) {
+        $wallets = json_decode($account['wallets'], true);
+        if (!is_array($wallets)) $wallets = [];
+    }
+    
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($user) {
+        $portal_name = $user['portal_name'] ?? 'Bank';
+        $theme_mode = $user['theme_mode'] ?? 'white';
+        $has_passkey = !empty($user['passkey']);
+    }
+    
+    // Get ALL transaction history
+    $stmt = $pdo->prepare("SELECT * FROM transaction_history WHERE user_id = ? AND description NOT LIKE '%Internal Relocation%' ORDER BY id DESC LIMIT 20");
+    $stmt->execute([$user_id]);
+    $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Filter for withdrawals (external_transfer and refund)
+    $withdrawal_transactions = array_filter($transactions, function($tx) {
+        return $tx['transaction_type'] == 'external_transfer' || $tx['transaction_type'] == 'refund';
+    });
+    
+    // Filter for deposits (deposit and credit)
+    $deposit_transactions = array_filter($transactions, function($tx) {
+        return $tx['transaction_type'] == 'deposit' || $tx['transaction_type'] == 'credit';
+    });
+    
+    // Get payment receipts
+    $stmt = $pdo->prepare("SELECT * FROM payments_receipt WHERE user_id = ? ORDER BY id DESC");
+    $stmt->execute([$user_id]);
+    $payment_receipts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    if (!empty($payment_receipts)) {
+        $latest_receipt = $payment_receipts[0];
+    }
+    
+    // Get payment options from deposits table
+    $stmt = $pdo->prepare("SELECT id, payment_type, payment_value, payment_receiver, amount, description, status FROM deposits WHERE user_id = ? AND status IN ('pending', 'completed') ORDER BY id DESC");
+    $stmt->execute([$user_id]);
+    $payment_options = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Get all users with account numbers for the "Send to User" feature
+    // Exclude current user
+    $stmt = $pdo->prepare("SELECT u.id, u.full_name, u.username, ia.account_number, ia.wallets 
+                          FROM users u 
+                          JOIN inheritance_accounts ia ON u.id = ia.user_id 
+                          WHERE ia.account_number IS NOT NULL AND u.id != ?");
+    $stmt->execute([$user_id]);
+    $all_users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Determine if withdrawal is allowed
+$withdrawal_disabled = false;
+$withdrawal_message = '';
+
+if ($user_id && $account) {
+    $current_date = date('Y-m-d');
+    $next_date = $account['next_withdrawal_date'] ?? null;
+    
+    if ($next_date && $next_date > $current_date) {
+        $withdrawal_disabled = true;
+        $withdrawal_message = "Next withdrawal available: " . date('F d, Y', strtotime($next_date));
+    } elseif ($account['available_balance'] <= 0) {
+        $withdrawal_disabled = true;
+        $withdrawal_message = "No funds available for disbursement";
+    }
+}
+
+// Get message from URL
+$message = "";
+$msg_type = "";
+$passkey_error = false;
+if (isset($_GET['msg'])) {
+    $message = $_GET['msg'];
+    $msg_type = isset($_GET['type']) ? $_GET['type'] : '';
+}
+if (isset($_GET['passkey_error'])) {
+    $passkey_error = true;
+    if (empty($message)) {
+        $message = "Sorry, we couldn't complete your withdrawal. You entered an incorrect passkey.";
+        $msg_type = 'error';
+    }
+}
+if (isset($error)) {
+    $message = "ERROR: " . $error;
+    $msg_type = 'error';
+}
+if (isset($login_error)) {
+    $message = "ERROR: " . $login_error;
+    $msg_type = 'error';
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <title><?php echo htmlspecialchars($portal_name); ?></title>
+<style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-card: #ffffff;
+            --text-primary: #1a1a2e;
+            --text-secondary: #4a4a6a;
+            --text-muted: #8888a8;
+            --border-color: #e8e8ee;
+            --shadow-color: rgba(0,0,0,0.04);
+            --accent-color: #2d6a4f;
+            --accent-hover: #1a4f3a;
+            --accent-light: #f0f5f2;
+            --danger-color: #dc3545;
+            --success-color: #2d6a4f;
+            --tab-bg: #ffffff;
+            --tab-active: #2d6a4f;
+            --tab-inactive: #8888a8;
+            --input-bg: #f8f9fa;
+            --modal-overlay: rgba(0,0,0,0.3);
+            --card-shadow: 0 2px 12px rgba(0,0,0,0.04);
+            --header-gradient-start: #1a1a2e;
+            --header-gradient-end: #2d6a4f;
+        }
+        
+        [data-theme="dark"] {
+            --bg-primary: #0f0f1a;
+            --bg-secondary: #1a1a2e;
+            --bg-card: #1e1e32;
+            --text-primary: #e8e8f0;
+            --text-secondary: #b0b0c8;
+            --text-muted: #707090;
+            --border-color: #2a2a44;
+            --shadow-color: rgba(0,0,0,0.3);
+            --accent-color: #4caf7a;
+            --accent-hover: #66d09a;
+            --accent-light: #1a2e24;
+            --danger-color: #ef5350;
+            --success-color: #4caf7a;
+            --tab-bg: #1a1a2e;
+            --tab-active: #4caf7a;
+            --tab-inactive: #707090;
+            --input-bg: #2a2a44;
+            --modal-overlay: rgba(0,0,0,0.7);
+            --card-shadow: 0 2px 12px rgba(0,0,0,0.2);
+            --header-gradient-start: #0a0a15;
+            --header-gradient-end: #1a2e24;
+        }
+        
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            transition: background 0.3s, color 0.3s;
+            height: 100%;
+            overflow: hidden;
+        }
+        
+        .custom-body {
+            height: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+            scroll-behavior: smooth;
+            width: 100%;
+            padding: 16px 16px 90px 16px;
+            background: var(--bg-primary);
+            position: relative;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .custom-body::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .custom-body::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        .custom-body::-webkit-scrollbar-thumb {
+            background: var(--accent-color);
+            border-radius: 2px;
+        }
+        
+        /* Login Container */
+        .login-container {
+            background: var(--bg-card);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: var(--card-shadow);
+            width: 100%;
+            max-width: 420px;
+            margin: 40px auto;
+            border: 1px solid var(--border-color);
+        }
+        
+        .login-container h2 {
+            color: var(--text-primary);
+            margin-bottom: 30px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 24px;
+        }
+        
+        .login-container .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .login-container label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        .login-container input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s;
+            background: var(--input-bg);
+            color: var(--text-primary);
+        }
+        
+        .login-container input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+        
+        .login-container button {
+            width: 100%;
+            padding: 14px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .login-container button:hover {
+            background: var(--accent-hover);
+        }
+        
+        .login-footer {
+            margin-top: 20px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+        
+        /* Dashboard */
+        .dashboard {
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            padding-bottom: 20px;
+        }
+        
+        /* Header */
+        .dashboard-header {
+            background: linear-gradient(135deg, var(--header-gradient-start) 0%, var(--header-gradient-end) 100%);
+            border-radius: 16px;
+            padding: 24px 30px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .dashboard-header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 300px;
+            height: 300px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        .dashboard-header .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 1;
+        }
+        
+        .dashboard-header .header-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(255,255,255,0.15);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .dashboard-header .header-text h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #ffffff;
+            margin: 0;
+            letter-spacing: 0.3px;
+        }
+        
+        .dashboard-header .header-text .header-sub {
+            font-size: 14px;
+            color: rgba(255,255,255,0.7);
+            margin: 0;
+            font-weight: 400;
+        }
+        
+        .dashboard-header .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 1;
+            flex-wrap: wrap;
+        }
+        
+        .dashboard-header .user-badge {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.12);
+            padding: 8px 16px 8px 12px;
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .dashboard-header .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        
+        .dashboard-header .user-name {
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .btn-logout {
+            padding: 8px 18px;
+            background: rgba(255,255,255,0.15);
+            color: #ffffff;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        
+        .btn-logout:hover {
+            background: rgba(255,255,255,0.25);
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: var(--card-shadow);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            letter-spacing: 0.3px;
+        }
+        
+        /* Balance Section */
+        .balance-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        
+        @media (max-width: 500px) {
+            .balance-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .balance-item {
+            text-align: center;
+            padding: 24px;
+            background: var(--accent-light);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .balance-item .label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+        
+        .balance-item .amount {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 8px 0 4px;
+        }
+        
+        .balance-item .desc {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        
+        /* Tabs */
+        .tab-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--tab-bg);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            padding: 6px 0 env(safe-area-inset-bottom, 6px) 0;
+            z-index: 1000;
+            box-shadow: 0 -2px 12px var(--shadow-color);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        
+        .tab-btn {
+            flex: 1;
+            padding: 8px 4px 4px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            text-align: center;
+            color: var(--tab-inactive);
+            font-size: 11px;
+            font-weight: 500;
+            transition: color 0.3s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1px;
+            position: relative;
+        }
+        
+        .tab-btn .tab-icon {
+            font-size: 22px;
+            line-height: 1;
+        }
+        
+        .tab-btn .tab-label {
+            font-size: 10px;
+            letter-spacing: 0.3px;
+        }
+        
+        .tab-btn.active {
+            color: var(--tab-active);
+        }
+        
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 30%;
+            right: 30%;
+            height: 3px;
+            background: var(--tab-active);
+            border-radius: 0 0 3px 3px;
+        }
+        
+        .tab-btn:hover {
+            color: var(--tab-active);
+        }
+        
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Sub-tabs for Transactions */
+        .sub-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+        
+        .sub-tab-btn {
+            padding: 10px 20px;
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.3s;
+            flex: 1;
+            text-align: center;
+            min-width: 100px;
+        }
+        
+        .sub-tab-btn.active {
+            border-color: var(--accent-color);
+            background: var(--accent-light);
+            color: var(--accent-color);
+        }
+        
+        .sub-tab-btn:hover {
+            border-color: var(--accent-color);
+        }
+        
+        .sub-tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+            padding-top: 8px;
+        }
+        
+        .sub-tab-content.active {
+            display: block;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* View containers for isolation */
+        .view-container {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .view-container.active {
+            display: block;
+        }
+        
+        /* Withdraw Sub-tabs */
+        .withdraw-sub-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        
+        .withdraw-sub-tab {
+            padding: 10px 20px;
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.3s;
+            flex: 1;
+            text-align: center;
+            min-width: 120px;
+        }
+        
+        .withdraw-sub-tab.active {
+            border-color: var(--accent-color);
+            background: var(--accent-light);
+            color: var(--accent-color);
+        }
+        
+        .withdraw-sub-tab:hover {
+            border-color: var(--accent-color);
+        }
+        
+        .withdraw-sub-content {
+            display: none;
+        }
+        
+        .withdraw-sub-content.active {
+            display: block;
+        }
+        
+        /* Source Grid */
+        .source-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        
+        @media (max-width: 400px) {
+            .source-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .source-btn {
+            padding: 20px 16px;
+            background: var(--input-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s;
+            color: var(--text-primary);
+            font-size: 15px;
+            font-weight: 500;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .source-btn:hover {
+            border-color: var(--accent-color);
+            background: var(--accent-light);
+            transform: translateY(-2px);
+        }
+        
+        .source-btn .source-icon {
+            font-size: 28px;
+            display: block;
+            margin-bottom: 4px;
+        }
+        
+        .source-btn .source-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .source-btn .source-amount {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent-color);
+            margin-top: 4px;
+        }
+        
+        /* Method Grid - Always 2 columns */
+        .method-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        
+        @media (max-width: 600px) {
+            .method-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+            }
+        }
+        
+        @media (max-width: 400px) {
+            .method-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+            }
+        }
+        
+        .method-btn {
+            padding: 20px 12px;
+            background: var(--input-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 500;
+            min-height: 90px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .method-btn:hover {
+            border-color: var(--accent-color);
+            background: var(--accent-light);
+            transform: translateY(-2px);
+        }
+        
+        .method-btn .method-icon {
+            font-size: 28px;
+            display: block;
+            margin-bottom: 6px;
+        }
+        
+        .method-btn .method-label {
+            font-size: 13px;
+        }
+        
+        @media (max-width: 480px) {
+            .method-btn {
+                padding: 16px 8px;
+                min-height: 70px;
+                font-size: 12px;
+            }
+            .method-btn .method-icon {
+                font-size: 22px;
+            }
+            .method-btn .method-label {
+                font-size: 11px;
+            }
+        }
+        
+        /* Back button */
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            margin-bottom: 16px;
+        }
+        
+        .back-btn:hover {
+            border-color: var(--accent-color);
+            color: var(--text-primary);
+        }
+        
+        /* Form fields */
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .form-group .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            background: var(--input-bg);
+            border-radius: 10px;
+            border: 1px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .form-group .input-wrapper:focus-within {
+            border-color: var(--accent-color);
+            background: var(--input-bg);
+        }
+        
+        .form-group .input-wrapper .currency-prefix {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            padding: 0 0 0 16px;
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 14px 16px 14px 8px;
+            border: none;
+            border-radius: 10px;
+            font-size: 20px;
+            font-weight: 600;
+            background: transparent;
+            color: var(--text-primary);
+            transition: background 0.3s;
+        }
+        
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+        }
+        
+        .form-group input::placeholder {
+            color: var(--text-muted);
+            font-weight: 400;
+            font-size: 16px;
+        }
+        
+        .form-group select {
+            font-size: 16px;
+            font-weight: 400;
+            cursor: pointer;
+        }
+        
+        .form-group select option {
+            padding: 8px;
+        }
+        
+        .btn-primary {
+            width: 100%;
+            padding: 14px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        /* User Search */
+        .user-search-result {
+            background: var(--input-bg);
+            border-radius: 10px;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            margin: 10px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .user-search-result .user-info {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .user-search-result .user-info .name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .user-search-result .user-info .account {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        .user-search-result .user-info .email {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        
+        .user-found {
+            border-color: var(--success-color);
+            background: var(--accent-light);
+        }
+        
+        .user-not-found {
+            border-color: var(--danger-color);
+            background: #fff5f5;
+        }
+        
+        [data-theme="dark"] .user-not-found {
+            background: #2a1a1a;
+        }
+        
+        .user-selected {
+            border-color: #4299e1;
+            background: #ebf8ff;
+        }
+        
+        [data-theme="dark"] .user-selected {
+            background: #1a2a3a;
+            border-color: #4299e1;
+        }
+        
+        /* Payment Detail Styles */
+        .payment-detail-card {
+            background: var(--input-bg);
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .payment-detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .payment-detail-row:last-child {
+            border-bottom: none;
+        }
+        
+        .payment-detail-label {
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            flex: 1;
+            min-width: 100px;
+        }
+        
+        .payment-detail-value {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 14px;
+            flex: 2;
+            word-break: break-all;
+            text-align: right;
+        }
+        
+        .copy-btn {
+            padding: 4px 12px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background 0.3s;
+            white-space: nowrap;
+            margin-left: 8px;
+        }
+        
+        .copy-btn:hover {
+            background: var(--accent-hover);
+        }
+        
+        .copy-btn.copied {
+            background: var(--success-color);
+        }
+        
+        .text-sm {
+            font-size: 13px;
+        }
+        
+        /* Receipt Modal */
+        #receiptModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--modal-overlay);
+            z-index: 3000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        #receiptModal.active {
+            display: flex;
+        }
+        
+        .receipt-modal-content {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 600px;
+            width: 100%;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 20px 60px var(--shadow-color);
+            animation: modalIn 0.3s ease;
+        }
+        
+        .receipt-modal-content::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .receipt-modal-content::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        .receipt-modal-content::-webkit-scrollbar-thumb {
+            background: var(--accent-color);
+            border-radius: 2px;
+        }
+        
+        .receipt-item {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.3s;
+            border-radius: 8px;
+        }
+        
+        .receipt-item:hover {
+            background: var(--accent-light);
+        }
+        
+        .receipt-item:last-child {
+            border-bottom: none;
+        }
+        
+        .receipt-item .receipt-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .receipt-item .receipt-date {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        
+        .receipt-item .receipt-amount {
+            font-weight: 600;
+            font-size: 16px;
+            color: var(--success-color);
+        }
+        
+        .receipt-item .receipt-subject {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .receipt-item .receipt-status {
+            font-size: 12px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            display: inline-block;
+        }
+        
+        .receipt-status.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .receipt-status.pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        [data-theme="dark"] .receipt-status.completed {
+            background: #1a3a2a;
+            color: #7acc9a;
+        }
+        
+        [data-theme="dark"] .receipt-status.pending {
+            background: #3a2e1a;
+            color: #ffd970;
+        }
+        
+        .receipt-close-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin-top: 16px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .receipt-close-btn:hover {
+            background: var(--accent-hover);
+        }
+        
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+        
+        .empty-state .empty-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+        
+        /* Notification */
+        #notify {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-card);
+            color: var(--text-primary);
+            padding: 16px 24px;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            z-index: 4000;
+            display: none;
+            animation: slideDown 0.3s ease;
+            box-shadow: 0 10px 40px var(--shadow-color);
+            max-width: 90vw;
+            text-align: center;
+            font-size: 15px;
+            font-weight: 500;
+        }
+        
+        #notify.success {
+            border-left: 4px solid var(--success-color);
+        }
+        
+        #notify.error {
+            border-left: 4px solid var(--danger-color);
+        }
+        
+        @keyframes slideDown {
+            from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+            to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+        
+        @keyframes modalIn {
+            from { transform: scale(0.95); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        
+        /* Misc */
+        .text-muted {
+            color: var(--text-muted);
+        }
+        
+        .mt-12 { margin-top: 12px; }
+        .mt-16 { margin-top: 16px; }
+        .mb-8 { margin-bottom: 8px; }
+        
+        .flex-between {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .text-center { text-align: center; }
+        
+        .max-withdrawal-info {
+            font-size: 14px;
+            color: var(--text-secondary);
+            padding: 12px;
+            background: var(--accent-light);
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .withdrawal-message {
+            color: var(--danger-color);
+            font-weight: 500;
+        }
+        
+        .receipt-btn {
+            display: inline-block;
+            padding: 6px 16px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: background 0.3s;
+        }
+        
+        .receipt-btn:hover {
+            background: var(--accent-hover);
+        }
+        
+        .amount-input {
+            font-size: 32px;
+            font-weight: 600;
+            padding: 20px 16px;
+            text-align: center;
+            letter-spacing: 1px;
+            background: var(--input-bg);
+            border: none;
+            border-radius: 12px;
+            color: var(--text-primary);
+            width: 100%;
+            transition: background 0.3s;
+        }
+        
+        .amount-input:focus {
+            outline: none;
+            background: var(--accent-light);
+        }
+        
+        .amount-input::placeholder {
+            color: var(--text-muted);
+            font-weight: 400;
+            font-size: 20px;
+            letter-spacing: 0;
+        }
+        
+        .deposit-summary {
+            background: var(--accent-light);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 12px 0;
+            border: 1px solid var(--border-color);
+        }
+        
+        .deposit-summary .label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .deposit-summary .value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        
+        .greeting-text {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        
+        .greeting-sub {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+        
+        /* Logout section */
+        .logout-section {
+            text-align: center;
+            padding: 20px 0;
+        }
+        
+        .logout-section .logout-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+        
+        .logout-section p {
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        
+        .logout-section .btn-logout-large {
+            padding: 14px 40px;
+            background: var(--danger-color);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.3s;
+        }
+        
+        .logout-section .btn-logout-large:hover {
+            opacity: 0.85;
+        }
+        
+        .menu-section {
+            padding: 10px 0;
+        }
+        
+        .menu-section .menu-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.3s;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+        
+        .menu-section .menu-item:hover {
+            background: var(--accent-light);
+        }
+        
+        .menu-section .menu-item .menu-icon {
+            font-size: 20px;
+        }
+        
+        .menu-section .menu-item .menu-label {
+            font-size: 15px;
+            font-weight: 500;
+        }
+        
+        .menu-divider {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 12px 0;
+        }
+        
+        /* Processing note */
+        .processing-note {
+            background: var(--accent-light);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 10px 12px;
+            font-size: clamp(12px, 2vw, 14px);
+            margin-top: 20px;
+            font-style: italic;
+            word-break: break-word;
+            width: 100%;
+        }
+        
+        .transaction-item {
+            display: flex;
+            flex-direction: column;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .transaction-item:last-child {
+            border-bottom: none;
+        }
+        
+        .transaction-info {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+        
+        .transaction-info .tx-date {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        
+        .transaction-info .tx-desc {
+            font-size: 14px;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+        
+        .transaction-info .tx-status {
+            font-size: 12px;
+            font-weight: 500;
+            margin-top: 4px;
+        }
+        
+        .transaction-info .tx-status.pending {
+            color: #8b6b4d;
+        }
+        
+        .transaction-info .tx-status.completed {
+            color: #2d5a2d;
+        }
+        
+        .transaction-info .tx-status.processing {
+            color: #2d5a7a;
+        }
+        
+        .transaction-amount {
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+        
+        .transaction-amount.positive {
+            color: var(--success-color);
+        }
+        
+        .transaction-amount.negative {
+            color: var(--danger-color);
+        }
+        
+        .transactions-container {
+            overflow-y: auto;
+            padding-right: 5px;
+            width: 100%;
+            max-height: 500px;
+        }
+        
+        .transactions-container::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .transactions-container::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        .transactions-container::-webkit-scrollbar-thumb {
+            background: var(--accent-color);
+            border-radius: 2px;
+        }
+        
+        .month-group {
+            margin-bottom: 16px;
+        }
+        
+        .month-group .month-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            padding: 8px 0 4px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 8px;
+        }
+        
+        /* Passkey Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--modal-overlay);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        .passkey-modal .modal-content {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px 24px;
+            max-width: 320px;
+            width: 100%;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 20px 60px var(--shadow-color);
+            animation: modalIn 0.3s ease;
+        }
+        
+        .passkey-modal .modal-content h3 {
+            font-size: 18px;
+            margin-bottom: 4px;
+            color: var(--text-primary);
+            text-align: center;
+        }
+        
+        .passkey-modal .modal-content .modal-subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 14px;
+            font-size: 13px;
+            text-align: center;
+        }
+        
+        .passkey-modal .passkey-dots {
+            font-size: 32px;
+            letter-spacing: 16px;
+            padding: 12px 0;
+            background: transparent;
+            border: none;
+            margin: 10px 0;
+            font-family: monospace;
+            text-align: center;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            color: var(--text-primary);
+        }
+        
+        .passkey-modal .passkey-dots.shake {
+            animation: shake 0.5s ease;
+            color: var(--danger-color);
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-8px); }
+            40% { transform: translateX(8px); }
+            60% { transform: translateX(-8px); }
+            80% { transform: translateX(8px); }
+        }
+        
+        .passkey-modal .keypad-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 10px 0;
+        }
+        
+        .passkey-modal .keypad-btn {
+            padding: 12px;
+            font-size: 20px;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            touch-action: manipulation;
+            user-select: none;
+        }
+        
+        .passkey-modal .keypad-btn:hover {
+            background: var(--accent-light);
+            border-color: var(--accent-color);
+        }
+        
+        .passkey-modal .keypad-btn:active {
+            transform: scale(0.95);
+        }
+        
+        .passkey-modal .keypad-btn.clear {
+            background: var(--danger-color);
+            color: white;
+            border-color: var(--danger-color);
+        }
+        
+        .passkey-modal .keypad-btn.clear:hover {
+            background: var(--danger-color);
+            opacity: 0.85;
+        }
+        
+        .passkey-modal .keypad-btn.enter {
+            background: var(--success-color);
+            color: white;
+            border-color: var(--success-color);
+        }
+        
+        .passkey-modal .keypad-btn.enter:hover {
+            opacity: 0.85;
+        }
+        
+        .passkey-modal .keypad-btn.back {
+            background: var(--text-muted);
+            color: white;
+            border-color: var(--text-muted);
+        }
+        
+        .passkey-modal .keypad-btn.back:hover {
+            opacity: 0.85;
+        }
+        
+        .passkey-modal .passkey-error {
+            color: var(--danger-color);
+            font-size: 13px;
+            margin-top: 6px;
+            min-height: 20px;
+            text-align: center;
+        }
+        
+        .passkey-modal .modal-btns {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .passkey-modal .modal-btns .btn-primary {
+            flex: 1;
+            padding: 10px;
+            font-size: 14px;
+        }
+        
+        .passkey-modal .modal-btns .btn-primary.cancel {
+            background: var(--text-muted);
+            order: 0;
+        }
+        
+        .passkey-modal .modal-btns .btn-primary.confirm {
+            order: 1;
+        }
+        
+        .passkey-modal .modal-btns .btn-primary.cancel:hover {
+            opacity: 0.85;
+        }
+        
+        /* Responsive */
+        @media (max-width: 480px) {
+            .custom-body {
+                padding: 12px 12px 80px 12px;
+            }
+            
+            .dashboard-header {
+                padding: 18px 20px;
+            }
+            
+            .dashboard-header .header-text h1 {
+                font-size: 17px;
+            }
+            
+            .dashboard-header .header-text .header-sub {
+                font-size: 12px;
+            }
+            
+            .balance-item .amount {
+                font-size: 26px;
+            }
+            
+            .login-container {
+                padding: 30px 20px;
+                margin: 20px auto;
+            }
+            
+            .tab-btn .tab-label {
+                font-size: 9px;
+            }
+            
+            .amount-input {
+                font-size: 24px;
+                padding: 16px;
+            }
+            
+            .deposit-summary .value {
+                font-size: 20px;
+            }
+            
+            .form-group .input-wrapper .currency-prefix {
+                font-size: 18px;
+                padding-left: 12px;
+            }
+            
+            .form-group input {
+                font-size: 18px;
+                padding: 12px 12px 12px 6px;
+            }
+            
+            .passkey-modal .modal-content {
+                padding: 16px 20px;
+            }
+            
+            .passkey-modal .keypad-btn {
+                padding: 10px;
+                font-size: 18px;
+            }
+            
+            .passkey-modal .passkey-dots {
+                font-size: 26px;
+                letter-spacing: 12px;
+                padding: 8px 0;
+            }
+            
+            .withdraw-sub-tab {
+                font-size: 12px;
+                padding: 8px 12px;
+                min-width: 80px;
+            }
+            
+            .sub-tab-btn {
+                font-size: 12px;
+                padding: 8px 12px;
+                min-width: 80px;
+            }
+        }
+        
+        @media (max-width: 360px) {
+            .method-btn {
+                padding: 12px 6px;
+                min-height: 60px;
+                font-size: 11px;
+            }
+            .method-btn .method-icon {
+                font-size: 18px;
+            }
+            .method-btn .method-label {
+                font-size: 10px;
+            }
+            .source-btn {
+                padding: 14px 10px;
+                font-size: 13px;
+            }
+            .source-btn .source-amount {
+                font-size: 15px;
+            }
+        }
+    </style>
+</head>
+<body data-theme="<?php echo htmlspecialchars($theme_mode); ?>">
+    <!-- Notification -->
+    <div id="notify" class="<?php echo $msg_type; ?>"><?php echo htmlspecialchars($message); ?></div>
+
+    <!-- Custom scrollable body -->
+    <div class="custom-body">
+        <?php if (!$user_id): ?>
+            <!-- Login -->
+            <div class="login-container">
+                <h2>🏦</h2>
+                <form method="POST">
+                    <div class="form-group">
+                        <label>Username or Email</label>
+                        <input type="text" name="username" required placeholder="Enter your username or email">
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" name="password" required placeholder="Enter your password">
+                    </div>
+                    <button type="submit" name="login">Sign In</button>
+                </form>
+            </div>
+        <?php else: ?>
+            <!-- Dashboard -->
+            <div class="dashboard">
+                <!-- Premium Header with Balance -->
+                <div class="dashboard-header">
+                    <div class="header-left">
+                        <div class="header-icon">🏦</div>
+                        <div class="header-text">
+                            <h1><?php echo htmlspecialchars($portal_name); ?></h1>
+                        </div>
+                    </div>
+                    <div class="header-right">
+                        <div class="user-badge">
+                            <div class="user-avatar"><?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?></div>
+                            <span class="user-name"><?php echo htmlspecialchars($user['full_name'] ?? 'User'); ?></span>
+                        </div>
+                        <a href="?logout=1"><button class="btn-logout">Sign Out</button></a>
+                    </div>
+                </div>
+
+                <!-- ========== TAB: HOME ========== -->
+                <div id="tab-home" class="tab-content active">
+                    <!-- Balance Section - Available Balance -->
+                    <div class="card">
+                        <div class="card-title">Account Overview</div>
+                        <div class="balance-grid" style="grid-template-columns: 1fr;">
+                            <div class="balance-item">
+                                <div class="label">Available Balance</div>
+                                <div class="amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['available_balance'], 2); ?></div>
+                                <div class="desc">Funds available for withdrawal</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Wallets Section -->
+                    <?php if(!empty($wallets)): ?>
+                    <div class="card">
+                        <div class="card-title">Wallets</div>
+                        <div class="balance-grid">
+                            <?php foreach($wallets as $wallet): ?>
+                                <div class="balance-item">
+                                    <div class="label"><?php echo htmlspecialchars($wallet['wallet_name'] ?? 'Wallet'); ?></div>
+                                    <div class="amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($wallet['wallet_balance'] ?? 0, 2); ?></div>
+                                    <div class="desc">Wallet balance</div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+
+                    <!-- Withdrawals Balance -->
+                    <div class="card">
+                        <div class="card-title">Withdrawals Balance</div>
+                        <div class="balance-grid" style="grid-template-columns: 1fr;">
+                            <div class="balance-item">
+                                <div class="label">Processed Transactions</div>
+                                <div class="amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['processed_amount'], 2); ?></div>
+                                <div class="desc">All Transcations</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Recent Transactions</div>
+                        <?php 
+                        $recent_transactions = array_slice(array_values($transactions), 0, 10);
+                        if(empty($recent_transactions)): ?>
+                            <div class="empty-state">
+                                <div class="empty-icon">📭</div>
+                                <p>No transactions yet</p>
+                            </div>
+                        <?php else: ?>
+                            <div class="transactions-container">
+                                <?php foreach($recent_transactions as $tx):
+                                    $is_withdrawal = in_array($tx['transaction_type'], ['external_transfer', 'refund']);
+                                    $is_deposit = in_array($tx['transaction_type'], ['deposit', 'credit']);
+                                    $amount_class = $is_withdrawal ? 'negative' : ($is_deposit ? 'positive' : '');
+                                    $amount_sign = $is_withdrawal ? '- ' : ($is_deposit ? '+ ' : '');
+                                    $status_text = $tx['status'] ?? 'Pending';
+                                    $status_class = strtolower($status_text);
+                                ?>
+                                    <div class="transaction-item">
+                                        <div class="transaction-amount <?php echo $amount_class; ?>">
+                                            <?php echo $amount_sign . htmlspecialchars($currency_symbol) . number_format($tx['amount'], 2); ?>
+                                        </div>
+                                        <div class="transaction-info">
+                                            <span class="tx-desc"><?php echo htmlspecialchars($tx['description'] ?? 'Transaction'); ?></span>
+                                            <span class="tx-date"><?php echo date('M d, Y', strtotime($tx['transaction_date'] ?? 'now')); ?></span>
+                                            <span class="tx-status <?php echo $status_class; ?>"><?php echo $status_text; ?></span>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <!-- Processing Note -->
+                    <div class="processing-note">
+                        <span>⏱️</span> Please be advised: Transactions may show as pending for up to 10 business days due to mandatory holding periods required by federal banking regulations (12 CFR 229) and court-ordered verification procedures.
+                    </div>
+                </div>
+
+                <!-- ========== TAB: DEPOSITS ========== -->
+                <div id="tab-deposits" class="tab-content">
+                    <div class="card">
+                        <div class="flex-between">
+                            <span class="card-title">Make a Deposit</span>
+                            <button class="receipt-btn" onclick="openReceiptModal()">View Receipts</button>
+                        </div>
+                        
+                        <?php if(empty($payment_options)): ?>
+                            <div class="empty-state">
+                                <div class="empty-icon">📭</div>
+                                <p>No deposit options available at this time</p>
+                            </div>
+                        <?php else: ?>
+                            <!-- View 1: Method Grid -->
+                            <div id="depositGridView" class="view-container active">
+                                <div class="method-grid">
+                                    <?php foreach($payment_options as $index => $option): ?>
+                                        <button class="method-btn" onclick="showDepositAmountView(<?php echo $index; ?>)">
+                                            <span class="method-icon">💳</span>
+                                            <span class="method-label"><?php echo ucfirst(str_replace('_', ' ', $option['payment_type'])); ?></span>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                            
+                            <!-- View 2: Amount Input -->
+                            <div id="depositAmountView" class="view-container">
+                                <button class="back-btn" onclick="showDepositGrid()">← Back to Options</button>
+                                <div id="depositAmountContent"></div>
+                            </div>
+                            
+                            <!-- View 3: Deposit Details -->
+                            <div id="depositDetailView" class="view-container">
+                                <button class="back-btn" onclick="showDepositGrid()">← Back to Options</button>
+                                <div id="depositDetailContent"></div>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <!-- ========== TAB: TRANSFER (WITHDRAW) ========== -->
+                <div id="tab-transfer" class="tab-content">
+                    <div class="card">
+                        <div class="card-title">Withdraw / Transfer</div>
+                        
+                        
+                        <!-- Sub-tabs: Send to User | Send External -->
+                        <div class="withdraw-sub-tabs">
+                            <button class="withdraw-sub-tab active" data-subtab="send-user" onclick="switchWithdrawSubTab('send-user')">👤 Send to <?php echo htmlspecialchars($portal_name); ?> User</button>
+                            <button class="withdraw-sub-tab" data-subtab="send-external" onclick="switchWithdrawSubTab('send-external')">🌐 Send External</button>
+                        </div>
+                        
+                        <!-- ===== SUB-TAB: SEND TO USER ===== -->
+                        <div id="withdraw-send-user" class="withdraw-sub-content active">
+                            <!-- View 1: Source Selection -->
+                            <div id="userSendSourceView" class="view-container active">
+                                <p class="text-muted text-sm mb-8">Select the source of funds to send to another user.</p>
+                                <div class="source-grid">
+                                    <!-- Available Balance -->
+                                    <button class="source-btn" onclick="selectUserSendSource('available_balance')">
+                                        <span class="source-icon">💰</span>
+                                        <span class="source-label">Available Balance</span>
+                                        <span class="source-amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['available_balance'], 2); ?></span>
+                                    </button>
+                                    
+                                    <!-- Wallets -->
+                                    <?php foreach($wallets as $index => $wallet): ?>
+                                        <button class="source-btn" onclick="selectUserSendSource('wallet_<?php echo $index; ?>')">
+                                            <span class="source-icon">🏦</span>
+                                            <span class="source-label"><?php echo htmlspecialchars($wallet['wallet_name']); ?></span>
+                                            <span class="source-amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($wallet['wallet_balance'] ?? 0, 2); ?></span>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                            
+                            <!-- View 2: User Search & Transfer -->
+                            <div id="userSendTransferView" class="view-container">
+                                <button class="back-btn" onclick="showUserSendSourceView()">← Back to Sources</button>
+                                <div id="userSendTransferContent"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- ===== SUB-TAB: SEND EXTERNAL ===== -->
+                        <div id="withdraw-send-external" class="withdraw-sub-content">
+                            <!-- View 1: Source Selection -->
+                            <div id="externalSourceView" class="view-container active">
+                                <p class="text-muted text-sm mb-8">Select the source of funds for external withdrawal.</p>
+                                <div class="source-grid">
+                                    <!-- Available Balance -->
+                                    <button class="source-btn" onclick="selectExternalSource('available')">
+                                        <span class="source-icon">💰</span>
+                                        <span class="source-label">Available Balance</span>
+                                        <span class="source-amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($account['available_balance'], 2); ?></span>
+                                    </button>
+                                    
+                                    <!-- Wallets -->
+                                    <?php foreach($wallets as $index => $wallet): ?>
+                                        <button class="source-btn" onclick="selectExternalSource('wallet_<?php echo $index; ?>')">
+                                            <span class="source-icon">🏦</span>
+                                            <span class="source-label"><?php echo htmlspecialchars($wallet['wallet_name']); ?></span>
+                                            <span class="source-amount"><?php echo htmlspecialchars($currency_symbol); ?><?php echo number_format($wallet['wallet_balance'] ?? 0, 2); ?></span>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                            
+                            <!-- View 2: Method Selection -->
+                            <div id="externalMethodView" class="view-container">
+                                <button class="back-btn" onclick="showExternalSourceView()">← Back to Sources</button>
+                                <div class="method-grid" id="externalMethodGrid">
+                                    <button class="method-btn" onclick="showExternalTransferForm('bank')">
+                                        <span class="method-icon">🏦</span>
+                                        <span class="method-label">Bank Transfer</span>
+                                    </button>
+                                    <button class="method-btn" onclick="showExternalTransferForm('paypal')">
+                                        <span class="method-icon">💳</span>
+                                        <span class="method-label">PayPal</span>
+                                    </button>
+                                    <button class="method-btn" onclick="showExternalTransferForm('cashapp')">
+                                        <span class="method-icon">📱</span>
+                                        <span class="method-label">CashApp</span>
+                                    </button>
+                                    <button class="method-btn" onclick="showExternalTransferForm('venmo')">
+                                        <span class="method-icon">💸</span>
+                                        <span class="method-label">Venmo</span>
+                                    </button>
+                                    <button class="method-btn" onclick="showExternalTransferForm('crypto')">
+                                        <span class="method-icon">🔗</span>
+                                        <span class="method-label">Crypto</span>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- View 3: Transfer Form -->
+                            <div id="externalFormView" class="view-container">
+                                <button class="back-btn" onclick="showExternalMethodView()">← Back to Methods</button>
+                                <div id="externalFormContent"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ========== TAB: TRANSACTIONS ========== -->
+                <div id="tab-transactions" class="tab-content">
+                    <div class="card">
+                        <div class="card-title">Transaction History</div>
+                        
+                        <div class="sub-tabs">
+                            <button class="sub-tab-btn" data-subtab="withdrawals" onclick="switchSubTab('withdrawals')">Withdrawals</button>
+                            <button class="sub-tab-btn" data-subtab="deposits" onclick="switchSubTab('deposits')">Deposits</button>
+                        </div>
+                        
+                        <!-- WITHDRAWALS ONLY -->
+                        <div id="subtab-withdrawals" class="sub-tab-content">
+                            <?php if(empty($withdrawal_transactions)): ?>
+                                <div class="empty-state">
+                                    <div class="empty-icon">📭</div>
+                                    <p>No withdrawal transactions</p>
+                                </div>
+                            <?php else: ?>
+                                <div class="transactions-container">
+                                    <?php 
+                                    $grouped = [];
+                                    foreach($withdrawal_transactions as $tx) {
+                                        $date = strtotime($tx['transaction_date'] ?? 'now');
+                                        $monthKey = date('Y-m', $date);
+                                        $monthLabel = date('F Y', $date);
+                                        if (!isset($grouped[$monthKey])) {
+                                            $grouped[$monthKey] = ['label' => $monthLabel, 'items' => []];
+                                        }
+                                        $grouped[$monthKey]['items'][] = $tx;
+                                    }
+                                    foreach($grouped as $month): ?>
+                                        <div class="month-group">
+                                            <div class="month-label"><?php echo $month['label']; ?></div>
+                                            <?php foreach($month['items'] as $tx): 
+                                                $status_text = $tx['status'] ?? 'Pending';
+                                                $status_class = strtolower($status_text);
+                                            ?>
+                                                <div class="transaction-item">
+                                                    <div class="transaction-amount negative">
+                                                        -<?php echo htmlspecialchars($currency_symbol) . number_format($tx['amount'], 2); ?>
+                                                    </div>
+                                                    <div class="transaction-info">
+                                                        <span class="tx-desc"><?php echo htmlspecialchars($tx['description'] ?? 'Withdrawal'); ?></span>
+                                                        <span class="tx-date"><?php echo date('M d, Y', strtotime($tx['transaction_date'] ?? 'now')); ?></span>
+                                                        <span class="tx-status <?php echo $status_class; ?>"><?php echo $status_text; ?></span>
+                                                    </div>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <div class="processing-note" style="margin-top:15px;">
+                                <span>⏱️</span> Please be advised: Transactions may show as pending for up to 10 business days due to mandatory holding periods required by federal banking regulations (12 CFR 229) and court-ordered verification procedures.
+                            </div>
+                        </div>
+                        
+                        <!-- DEPOSITS ONLY -->
+                        <div id="subtab-deposits" class="sub-tab-content">
+                            <?php if(empty($deposit_transactions) && empty($payment_receipts)): ?>
+                                <div class="empty-state">
+                                    <div class="empty-icon">📭</div>
+                                    <p>No deposit transactions</p>
+                                </div>
+                            <?php else: 
+                                $all_deposits = [];
+                                
+                                foreach($deposit_transactions as $tx) {
+                                    $all_deposits[] = [
+                                        'date' => $tx['transaction_date'] ?? date('Y-m-d H:i:s'),
+                                        'amount' => $tx['amount'],
+                                        'description' => $tx['description'] ?? 'Deposit',
+                                        'type' => 'transaction',
+                                        'status' => $tx['status'] ?? 'Pending'
+                                    ];
+                                }
+                                
+                                foreach($payment_receipts as $receipt) {
+                                    $all_deposits[] = [
+                                        'date' => $receipt['paid_date'] ?? $receipt['created_at'] ?? date('Y-m-d H:i:s'),
+                                        'amount' => $receipt['amount_paid'] ?? 0,
+                                        'description' => $receipt['payment_subject'] ?? 'Payment Receipt',
+                                        'type' => 'receipt',
+                                        'status' => $receipt['status'] ?? 'Completed'
+                                    ];
+                                }
+                                
+                                usort($all_deposits, function($a, $b) {
+                                    return strtotime($b['date']) - strtotime($a['date']);
+                                });
+                                
+                                $grouped = [];
+                                foreach($all_deposits as $dep) {
+                                    $date = strtotime($dep['date']);
+                                    $monthKey = date('Y-m', $date);
+                                    $monthLabel = date('F Y', $date);
+                                    if (!isset($grouped[$monthKey])) {
+                                        $grouped[$monthKey] = ['label' => $monthLabel, 'items' => []];
+                                    }
+                                    $grouped[$monthKey]['items'][] = $dep;
+                                }
+                            ?>
+                                <div class="transactions-container">
+                                    <?php foreach($grouped as $month): ?>
+                                        <div class="month-group">
+                                            <div class="month-label"><?php echo $month['label']; ?></div>
+                                            <?php foreach($month['items'] as $dep): 
+                                                $status_text = $dep['status'] ?? 'Completed';
+                                                $status_class = strtolower($status_text);
+                                            ?>
+                                                <div class="transaction-item">
+                                                    <div class="transaction-amount positive">
+                                                        +<?php echo htmlspecialchars($currency_symbol) . number_format($dep['amount'], 2); ?>
+                                                    </div>
+                                                    <div class="transaction-info">
+                                                        <span class="tx-desc"><?php echo htmlspecialchars($dep['description']); ?></span>
+                                                        <span class="tx-date"><?php echo date('M d, Y', strtotime($dep['date'])); ?></span>
+                                                        <?php if(isset($dep['type']) && $dep['type'] == 'receipt'): ?>
+                                                            <span class="tx-status" style="color:var(--text-muted); font-size:11px;">Receipt</span>
+                                                        <?php else: ?>
+                                                            <span class="tx-status <?php echo $status_class; ?>"><?php echo $status_text; ?></span>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <div class="processing-note" style="margin-top:15px;">
+                                <span>⏱️</span> Please be advised: Transactions may show as pending for up to 10 business days due to mandatory holding periods required by federal banking regulations (12 CFR 229) and court-ordered verification procedures.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ========== TAB: MENU ========== -->
+                <div id="tab-menu" class="tab-content">
+                    <div class="card">
+                        <div class="card-title">Settings & Account</div>
+                        
+                        <div class="menu-section">
+                            <div class="menu-item" style="opacity:0.5; cursor:default;">
+                                <span class="menu-icon">👤</span>
+                                <span class="menu-label"><?php echo htmlspecialchars($user['full_name'] ?? 'User'); ?></span>
+                            </div>
+                            <div class="menu-item" style="opacity:0.5; cursor:default;">
+                                <span class="menu-icon">📧</span>
+                                <span class="menu-label"><?php echo htmlspecialchars($user['email'] ?? 'No email'); ?></span>
+                            </div>
+                            <div class="menu-item" style="opacity:0.5; cursor:default;">
+                                <span class="menu-icon">🏦</span>
+                                <span class="menu-label"><?php echo htmlspecialchars($portal_name); ?></span>
+                            </div>
+                            
+                            <hr class="menu-divider">
+                            
+                            <div class="logout-section">
+                                <div class="logout-icon">🚪</div>
+                                <p>Ready to leave? Sign out of your account securely.</p>
+                                <a href="?logout=1"><button class="btn-logout-large">Sign Out</button></a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- Bottom Tabs -->
+    <?php if ($user_id): ?>
+    <div class="tab-container">
+        <button class="tab-btn active" data-tab="home" onclick="switchTab('home')">
+            <span class="tab-icon">🏦</span>
+            <span class="tab-label">Home</span>
+        </button>
+        <button class="tab-btn" data-tab="deposits" onclick="switchTab('deposits')">
+            <span class="tab-icon">📥</span>
+            <span class="tab-label">Deposits</span>
+        </button>
+        <button class="tab-btn" data-tab="transfer" onclick="switchTab('transfer')">
+            <span class="tab-icon">💳</span>
+            <span class="tab-label">Withdraw</span>
+        </button>
+        <button class="tab-btn" data-tab="transactions" onclick="switchTab('transactions')">
+            <span class="tab-icon">📋</span>
+            <span class="tab-label">Transactions</span>
+        </button>
+        <button class="tab-btn" data-tab="menu" onclick="switchTab('menu')">
+            <span class="tab-icon">⚙️</span>
+            <span class="tab-label">Menu</span>
+        </button>
+    </div>
+    <?php endif; ?>
+
+    <!-- Receipt Modal -->
+    <div id="receiptModal">
+        <div class="receipt-modal-content">
+            <h3 style="text-align:center; margin-bottom:16px;">Payment Receipts</h3>
+            <div id="receiptList"></div>
+            <button class="receipt-close-btn" onclick="closeReceiptModal()">Close</button>
+        </div>
+    </div>
+
+    <!-- Passkey Modal - Compact -->
+    <div id="passkeyModal" class="modal-overlay passkey-modal">
+        <div class="modal-content">
+            <h3>Enter Passkey</h3>
+            <p class="modal-subtitle">Enter your 6-digit passkey</p>
+            
+            <div class="passkey-dots" id="passkeyDots">······</div>
+            <div class="passkey-error" id="passkeyError"></div>
+            
+            <div class="keypad-grid">
+                <button class="keypad-btn" onclick="pressKey('1')">1</button>
+                <button class="keypad-btn" onclick="pressKey('2')">2</button>
+                <button class="keypad-btn" onclick="pressKey('3')">3</button>
+                <button class="keypad-btn" onclick="pressKey('4')">4</button>
+                <button class="keypad-btn" onclick="pressKey('5')">5</button>
+                <button class="keypad-btn" onclick="pressKey('6')">6</button>
+                <button class="keypad-btn" onclick="pressKey('7')">7</button>
+                <button class="keypad-btn" onclick="pressKey('8')">8</button>
+                <button class="keypad-btn" onclick="pressKey('9')">9</button>
+                <button class="keypad-btn clear" onclick="clearPasskey()">C</button>
+                <button class="keypad-btn" onclick="pressKey('0')">0</button>
+                <button class="keypad-btn back" onclick="backspacePasskey()">⌫</button>
+            </div>
+            
+            <div class="modal-btns">
+                <button class="btn-primary cancel" onclick="closePasskeyModal()">Cancel</button>
+                <button class="btn-primary confirm" onclick="submitPasskey()">Confirm</button>
+            </div>
+            
+            <input type="hidden" id="passkeyInput" value="">
+        </div>
+    </div>
+
+    <script>
+        // ===== CONFIGURATION =====
+        const allUsers = <?php echo json_encode($all_users); ?>;
+        const currentUserId = <?php echo json_encode($user_id); ?>;
+        const currencySymbol = <?php echo json_encode($currency_symbol); ?>;
+        const portalName = <?php echo json_encode($portal_name); ?>;
+        const userName = <?php echo json_encode($user['full_name'] ?? 'User'); ?>;
+        const wallets = <?php echo json_encode($wallets); ?>;
+        const availableBalance = <?php echo json_encode($account['available_balance'] ?? 0); ?>;
+        const maxWithdrawalAmount = <?php echo json_encode($max_withdrawal_amount); ?>;
+        const hasPasskey = <?php echo $has_passkey ? 'true' : 'false'; ?>;
+
+        // ===== NOTIFICATION =====
+        window.addEventListener('load', function() {
+            const notify = document.getElementById('notify');
+            if (notify && notify.innerText.trim() !== '') {
+                notify.style.display = 'block';
+                setTimeout(() => {
+                    notify.style.display = 'none';
+                }, 5000);
+                
+                if (window.history.replaceState) {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('msg');
+                    url.searchParams.delete('type');
+                    url.searchParams.delete('passkey_error');
+                    window.history.replaceState({}, document.title, url.pathname + url.search);
+                }
+            }
+        });
+
+        // ===== TAB SWITCHING =====
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            const target = document.getElementById('tab-' + tabName);
+            if (target) target.classList.add('active');
+            
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            const btn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+            if (btn) btn.classList.add('active');
+            
+            resetDepositViews();
+            resetWithdrawViews();
+        }
+
+        function switchSubTab(subtab) {
+            document.querySelectorAll('.sub-tab-content').forEach(el => el.classList.remove('active'));
+            const target = document.getElementById('subtab-' + subtab);
+            if (target) target.classList.add('active');
+            
+            document.querySelectorAll('.sub-tab-btn').forEach(el => el.classList.remove('active'));
+            const btn = document.querySelector(`.sub-tab-btn[data-subtab="${subtab}"]`);
+            if (btn) btn.classList.add('active');
+        }
+
+        // ===== WITHDRAW SUB-TABS =====
+        function switchWithdrawSubTab(subtab) {
+            document.querySelectorAll('.withdraw-sub-content').forEach(el => el.classList.remove('active'));
+            const target = document.getElementById('withdraw-' + subtab);
+            if (target) target.classList.add('active');
+            
+            document.querySelectorAll('.withdraw-sub-tab').forEach(el => el.classList.remove('active'));
+            const btn = document.querySelector(`.withdraw-sub-tab[data-subtab="${subtab}"]`);
+            if (btn) btn.classList.add('active');
+            
+            // Reset views when switching
+            if (subtab === 'send-user') {
+                showUserSendSourceView();
+            } else {
+                showExternalSourceView();
+            }
+        }
+
+        function resetWithdrawViews() {
+            // Reset user send
+            const userSendSourceView = document.getElementById('userSendSourceView');
+            const userSendTransferView = document.getElementById('userSendTransferView');
+            if (userSendSourceView) userSendSourceView.classList.add('active');
+            if (userSendTransferView) userSendTransferView.classList.remove('active');
+            
+            // Reset external
+            const externalSourceView = document.getElementById('externalSourceView');
+            const externalMethodView = document.getElementById('externalMethodView');
+            const externalFormView = document.getElementById('externalFormView');
+            if (externalSourceView) externalSourceView.classList.add('active');
+            if (externalMethodView) externalMethodView.classList.remove('active');
+            if (externalFormView) externalFormView.classList.remove('active');
+        }
+
+        // ============================================================
+        // ===== SEND TO USER =====
+        // ============================================================
+        let userSendSource = '';
+        let selectedRecipient = null;
+
+        function selectUserSendSource(source) {
+            userSendSource = source;
+            const sourceView = document.getElementById('userSendSourceView');
+            const transferView = document.getElementById('userSendTransferView');
+            if (sourceView) sourceView.classList.remove('active');
+            if (transferView) transferView.classList.add('active');
+            renderUserSendTransferForm(source);
+        }
+
+        function showUserSendSourceView() {
+            const sourceView = document.getElementById('userSendSourceView');
+            const transferView = document.getElementById('userSendTransferView');
+            if (sourceView) sourceView.classList.add('active');
+            if (transferView) transferView.classList.remove('active');
+            selectedRecipient = null;
+        }
+
+        function renderUserSendTransferForm(source) {
+            const container = document.getElementById('userSendTransferContent');
+            if (!container) return;
+            
+            // Get source label and max amount
+            let sourceLabel = '';
+            let maxAmount = 0;
+            
+            if (source === 'available_balance') {
+                sourceLabel = 'Available Balance';
+                maxAmount = parseFloat(availableBalance);
+            } else if (source.startsWith('wallet_')) {
+                const idx = parseInt(source.replace('wallet_', ''));
+                if (wallets[idx]) {
+                    sourceLabel = wallets[idx].wallet_name || 'Wallet';
+                    maxAmount = parseFloat(wallets[idx].wallet_balance || 0);
+                }
+            }
+            
+            // For user-to-user transfers, use min of source balance and max withdrawal
+            const transferMax = Math.min(maxAmount, maxWithdrawalAmount);
+            
+            let html = `
+                <div style="background:var(--accent-light); border-radius:8px; padding:12px; margin-bottom:16px; border:1px solid var(--border-color);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <span style="font-weight:600; color:var(--text-secondary);">Sending from:</span>
+                        <span style="font-weight:700; color:var(--text-primary);">${sourceLabel}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-top:4px;">
+                        <span style="font-weight:600; color:var(--text-secondary);">Available:</span>
+                        <span style="font-weight:700; color:var(--accent-color);">${currencySymbol}${maxAmount.toFixed(2)}</span>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>🔍 Enter Recipient Account Number</label>
+                    <div style="display:flex; gap:10px;">
+                        <input type="text" id="recipientAccountSearch" placeholder="Enter account number" 
+                               style="flex:1; font-family:'Courier New',monospace; letter-spacing:1px; padding:12px; border:1px solid var(--border-color); border-radius:10px; background:var(--input-bg); color:var(--text-primary);"
+                               oninput="searchUserByAccount(this.value)">
+                        <button type="button" class="btn-primary" style="width:auto; padding:12px 20px;" onclick="searchUserByAccount(document.getElementById('recipientAccountSearch').value)">Search</button>
+                    </div>
+                    <div id="userSearchResult"></div>
+                </div>
+                
+                <div id="recipientInfo" style="display:none;">
+                    <div class="user-search-result user-selected">
+                        <div class="user-info">
+                            <span class="name" id="recipientName">—</span>
+                            <span class="account" id="recipientAccount">—</span>
+                            <span class="email" id="recipientEmail">—</span>
+                        </div>
+                        <span style="color:var(--success-color); font-weight:600;">✓ Selected</span>
+                    </div>
+                    <input type="hidden" id="recipientUserId" value="">
+                </div>
+                
+                <form method="POST" id="userSendForm">
+                    <input type="hidden" name="send_to_user" value="1">
+                    <input type="hidden" name="from_bucket" value="${source}">
+                    <input type="hidden" name="to_user_id" id="userSendToUserId" value="">
+                    
+                    <div class="form-group">
+                        <label>💳 Amount to Send</label>
+                        <div class="input-wrapper">
+                            <span class="currency-prefix">${currencySymbol}</span>
+                            <input type="number" name="send_amount" id="userSendAmount" 
+                                   min="0.01" max="${transferMax}" step="0.01" placeholder="0.00" required>
+                        </div>
+                        <small style="color:var(--text-muted);">Per transaction: ${currencySymbol}${transferMax.toFixed(2)}</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>📥 To (Recipient's Bucket)</label>
+                        <select name="to_bucket" id="recipientBucketSelect" required>
+                            <optgroup label="Main Balances">
+                                <option value="available_balance">Available Balance</option>
+                                <option value="total_amount">Total Portfolio</option>
+                                <option value="processed_amount">Processed Amount</option>
+                            </optgroup>
+                            <optgroup label="Recipient's Wallets" id="recipientWalletsGroup">
+                                <option value="" disabled>Search for a user first</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Status Label</label>
+                        <input type="text" name="b_status" value="Completed" placeholder="e.g. Processing, Completed, etc.">
+                    </div>
+                    
+                    <button type="button" onclick="submitUserSend()" class="btn-primary" id="userSendBtn" disabled>
+                        Confirm withdrawal
+                    </button>
+                </form>
+            `;
+            
+            container.innerHTML = html;
+            
+            // Add amount validation
+            document.getElementById('userSendAmount')?.addEventListener('input', function() {
+                const max = parseFloat(this.max);
+                const value = parseFloat(this.value);
+                if (value > max) this.value = max;
+                if (value < 0) this.value = 0;
+            });
+        }
+
+        function searchUserByAccount(accountNumber) {
+            const resultDiv = document.getElementById('userSearchResult');
+            const recipientInfo = document.getElementById('recipientInfo');
+            const sendBtn = document.getElementById('userSendBtn');
+            
+            selectedRecipient = null;
+            if (sendBtn) sendBtn.disabled = true;
+            
+            if (!accountNumber || accountNumber.length < 3) {
+                if (resultDiv) resultDiv.innerHTML = '<div class="text-muted text-sm">Enter at least 3 characters to search...</div>';
+                if (recipientInfo) recipientInfo.style.display = 'none';
+                return;
+            }
+            
+            const matches = allUsers.filter(u => 
+                u.account_number && u.account_number.toString().includes(accountNumber)
+            );
+            
+            if (matches.length === 0) {
+                if (resultDiv) resultDiv.innerHTML = '<div class="user-search-result user-not-found"><span>❌ No user found with that account number</span></div>';
+                if (recipientInfo) recipientInfo.style.display = 'none';
+                return;
+            }
+            
+            if (matches.length === 1) {
+                const user = matches[0];
+                selectedRecipient = user;
+                if (resultDiv) {
+                    resultDiv.innerHTML = `
+                        <div class="user-search-result user-found">
+                            <div class="user-info">
+                                <span class="name">✅ ${escapeHtml(user.full_name)}</span>
+                                <span class="account">Account: ${escapeHtml(user.account_number)}</span>
+                                <span class="email">${escapeHtml(user.username || '')}</span>
+                            </div>
+                            <button type="button" class="btn-primary" style="width:auto; padding:6px 16px; font-size:13px;" onclick="selectRecipient(${user.id})">Select</button>
+                        </div>
+                    `;
+                }
+                if (recipientInfo) recipientInfo.style.display = 'none';
+                return;
+            }
+            
+            let html = '<div style="background:var(--input-bg); border-radius:8px; padding:8px; margin-top:8px;"><div class="text-muted text-sm" style="margin-bottom:8px;">Multiple users found. Select one:</div>';
+            matches.forEach(user => {
+                html += `
+                    <div class="user-search-result" style="margin:4px 0; padding:8px 12px;">
+                        <div class="user-info">
+                            <span class="name">${escapeHtml(user.full_name)}</span>
+                            <span class="account">Account: ${escapeHtml(user.account_number)}</span>
+                        </div>
+                        <button type="button" class="btn-primary" style="width:auto; padding:4px 12px; font-size:12px;" onclick="selectRecipient(${user.id})">Select</button>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            if (resultDiv) resultDiv.innerHTML = html;
+            if (recipientInfo) recipientInfo.style.display = 'none';
+        }
+
+        function selectRecipient(userId) {
+            const user = allUsers.find(u => u.id == userId);
+            if (!user) return;
+            
+            selectedRecipient = user;
+            
+            const nameEl = document.getElementById('recipientName');
+            const accountEl = document.getElementById('recipientAccount');
+            const emailEl = document.getElementById('recipientEmail');
+            const userIdEl = document.getElementById('recipientUserId');
+            const sendToUserIdEl = document.getElementById('userSendToUserId');
+            const recipientInfo = document.getElementById('recipientInfo');
+            const searchResult = document.getElementById('userSearchResult');
+            const sendBtn = document.getElementById('userSendBtn');
+            
+            if (nameEl) nameEl.textContent = user.full_name;
+            if (accountEl) accountEl.textContent = 'Account: ' + user.account_number;
+            if (emailEl) emailEl.textContent = user.username || '';
+            if (userIdEl) userIdEl.value = user.id;
+            if (sendToUserIdEl) sendToUserIdEl.value = user.id;
+            if (recipientInfo) recipientInfo.style.display = 'block';
+            if (searchResult) searchResult.innerHTML = '';
+            if (sendBtn) sendBtn.disabled = false;
+            
+            // Update recipient wallets
+            updateRecipientWallets(user);
+            
+            showNotification('You are sending to ' + user.full_name, 'success');
+        }
+
+        function updateRecipientWallets(user) {
+            const group = document.getElementById('recipientWalletsGroup');
+            if (!group) return;
+            
+            group.innerHTML = '';
+            
+            let userWallets = [];
+            try {
+                if (user.wallets) {
+                    userWallets = typeof user.wallets === 'string' ? JSON.parse(user.wallets) : user.wallets;
+                    if (!Array.isArray(userWallets)) userWallets = [];
+                }
+            } catch (e) {
+                userWallets = [];
+            }
+            
+            if (userWallets && userWallets.length > 0) {
+                userWallets.forEach((wallet, idx) => {
+                    const option = document.createElement('option');
+                    option.value = 'wallet_' + idx;
+                    option.textContent = wallet.wallet_name || 'Wallet ' + (idx + 1);
+                    group.appendChild(option);
+                });
+            } else {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No wallets available';
+                option.disabled = true;
+                group.appendChild(option);
+            }
+        }
+
+        function submitUserSend() {
+            const form = document.getElementById('userSendForm');
+            if (!form) return;
+            
+            // Validate
+            const amount = document.getElementById('userSendAmount')?.value;
+            const userId = document.getElementById('userSendToUserId')?.value;
+            
+            if (!amount || parseFloat(amount) <= 0) {
+                showNotification('Please enter a valid amount', 'error');
+                return;
+            }
+            
+            if (!userId) {
+                showNotification('Please select a recipient', 'error');
+                return;
+            }
+            
+            // Store form reference for passkey modal
+            pendingForm = form;
+            openPasskeyModal();
+        }
+
+        // ============================================================
+        // ===== SEND EXTERNAL =====
+        // ============================================================
+        let externalSource = '';
+        let externalMethod = '';
+
+        function selectExternalSource(source) {
+            externalSource = source;
+            const sourceView = document.getElementById('externalSourceView');
+            const methodView = document.getElementById('externalMethodView');
+            if (sourceView) sourceView.classList.remove('active');
+            if (methodView) methodView.classList.add('active');
+        }
+
+        function showExternalSourceView() {
+            const sourceView = document.getElementById('externalSourceView');
+            const methodView = document.getElementById('externalMethodView');
+            const formView = document.getElementById('externalFormView');
+            if (sourceView) sourceView.classList.add('active');
+            if (methodView) methodView.classList.remove('active');
+            if (formView) formView.classList.remove('active');
+            externalSource = '';
+            externalMethod = '';
+        }
+
+        function showExternalMethodView() {
+            const methodView = document.getElementById('externalMethodView');
+            const formView = document.getElementById('externalFormView');
+            if (methodView) methodView.classList.add('active');
+            if (formView) formView.classList.remove('active');
+        }
+
+        function showExternalTransferForm(method) {
+            externalMethod = method;
+            
+            const methodView = document.getElementById('externalMethodView');
+            const formView = document.getElementById('externalFormView');
+            if (methodView) methodView.classList.remove('active');
+            if (formView) formView.classList.add('active');
+            
+            const container = document.getElementById('externalFormContent');
+            if (!container) return;
+            
+            // Get max amount based on source
+            let maxAmount = 0;
+            let sourceLabel = '';
+            
+            if (externalSource === 'available') {
+                maxAmount = parseFloat(availableBalance);
+                sourceLabel = 'Available Balance';
+            } else if (externalSource.startsWith('wallet_')) {
+                const idx = parseInt(externalSource.replace('wallet_', ''));
+                if (wallets[idx]) {
+                    maxAmount = parseFloat(wallets[idx].wallet_balance || 0);
+                    sourceLabel = wallets[idx].wallet_name || 'Wallet';
+                }
+            }
+            
+            // Use the smaller of available balance or max withdrawal limit
+            const transferMax = Math.min(maxAmount, maxWithdrawalAmount);
+            
+            let formHtml = `
+                <form method="POST" id="externalTransferForm">
+                    <input type="hidden" name="withdraw" value="1">
+                    <input type="hidden" name="transfer_method" value="${method}">
+                    <input type="hidden" name="source" value="${externalSource}">
+                    
+                    <div style="background:var(--accent-light); border-radius:8px; padding:12px; margin-bottom:16px; border:1px solid var(--border-color);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                            <span style="font-weight:600; color:var(--text-secondary);">Withdrawing from:</span>
+                            <span style="font-weight:700; color:var(--text-primary);">${sourceLabel}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-top:4px;">
+                            <span style="font-weight:600; color:var(--text-secondary);">Available:</span>
+                            <span style="font-weight:700; color:var(--accent-color);">${currencySymbol}${maxAmount.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Receiver Name</label>
+                        <input type="text" name="receiver_name" value="${escapeHtml(userName)}" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Amount</label>
+                        <div class="input-wrapper">
+                            <span class="currency-prefix">${currencySymbol}</span>
+                            <input type="number" name="amount" id="externalAmount" min="0.01" max="${transferMax}" step="0.01" placeholder="0.00" required>
+                        </div>
+                        <small style="color:var(--text-muted);">Per transaction: ${currencySymbol}${transferMax.toFixed(2)}</small>
+                    </div>
+            `;
+            
+            switch(method) {
+                case 'bank':
+                    formHtml += `
+                        <div class="form-group">
+                            <label>Bank Name</label>
+                            <input type="text" name="b_name" placeholder="e.g., Chase, Barclays" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Account Number</label>
+                            <input type="text" name="b_acc" placeholder="Account number" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Routing / Sort Code</label>
+                            <input type="text" name="b_routing" placeholder="Routing or sort code">
+                        </div>
+                        <div class="form-group">
+                            <label>SWIFT/BIC (International)</label>
+                            <input type="text" name="b_swift" placeholder="Optional for domestic">
+                        </div>
+                    `;
+                    break;
+                case 'paypal':
+                    formHtml += `
+                        <div class="form-group">
+                            <label>PayPal Email Address</label>
+                            <input type="email" name="pp_email" placeholder="your-email@example.com" required>
+                        </div>
+                    `;
+                    break;
+                case 'cashapp':
+                    formHtml += `
+                        <div class="form-group">
+                            <label>CashTag</label>
+                            <input type="text" name="ca_tag" placeholder="$yourcashtag" required>
+                        </div>
+                    `;
+                    break;
+                case 'venmo':
+                    formHtml += `
+                        <div class="form-group">
+                            <label>Venmo Username</label>
+                            <input type="text" name="vn_user" placeholder="@yourusername" required>
+                        </div>
+                    `;
+                    break;
+                case 'crypto':
+                    formHtml += `
+                        <div class="form-group">
+                            <label>Blockchain Network</label>
+                            <select name="crypto_chain" required>
+                                <option value="">-- Select Network --</option>
+                                <option value="BTC">Bitcoin (BTC)</option>
+                                <option value="ETH">Ethereum (ETH)</option>
+                                <option value="USDT-ERC20">USDT (ERC20)</option>
+                                <option value="USDT-TRC20">USDT (TRC20)</option>
+                                <option value="BSC">BSC (BEP20)</option>
+                                <option value="SOL">Solana (SOL)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Wallet Address</label>
+                            <input type="text" name="wallet_address" placeholder="Enter wallet address" required>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            formHtml += `
+                    <button type="button" onclick="submitExternalTransfer()" class="btn-primary mt-16">
+                        Execute Withdrawal
+                    </button>
+                </form>
+            `;
+            
+            container.innerHTML = formHtml;
+            
+            document.getElementById('externalAmount')?.addEventListener('input', function() {
+                const max = parseFloat(this.max);
+                const value = parseFloat(this.value);
+                if (value > max) this.value = max;
+                if (value < 0) this.value = 0;
+            });
+        }
+
+        function submitExternalTransfer() {
+            const form = document.getElementById('externalTransferForm');
+            if (!form) return;
+            
+            const amount = form.querySelector('input[name="amount"]')?.value;
+            const receiver = form.querySelector('input[name="receiver_name"]')?.value;
+            
+            if (!amount || parseFloat(amount) <= 0) {
+                showNotification('Please enter a valid amount', 'error');
+                return;
+            }
+            
+            if (!receiver) {
+                showNotification('Please enter receiver name', 'error');
+                return;
+            }
+            
+            pendingForm = form;
+            openPasskeyModal();
+        }
+
+        // ============================================================
+        // ===== DEPOSITS =====
+        // ============================================================
+        const paymentOptions = <?php echo json_encode($payment_options); ?>;
+
+        function showDepositGrid() {
+            const gridView = document.getElementById('depositGridView');
+            const amountView = document.getElementById('depositAmountView');
+            const detailView = document.getElementById('depositDetailView');
+            if (gridView) gridView.classList.add('active');
+            if (amountView) amountView.classList.remove('active');
+            if (detailView) detailView.classList.remove('active');
+        }
+
+        function showDepositAmountView(index) {
+            const option = paymentOptions[index];
+            if (!option) return;
+            
+            const gridView = document.getElementById('depositGridView');
+            const amountView = document.getElementById('depositAmountView');
+            const detailView = document.getElementById('depositDetailView');
+            if (gridView) gridView.classList.remove('active');
+            if (amountView) amountView.classList.add('active');
+            if (detailView) detailView.classList.remove('active');
+            
+            const container = document.getElementById('depositAmountContent');
+            if (!container) return;
+            
+            let html = `
+                <div class="greeting-text">Hello ${userName}</div>
+                <div class="greeting-sub">To proceed, please enter the amount you wish to deposit</div>
+                
+                <form id="depositAmountForm" onsubmit="return showDepositDetails(event, ${index})">
+                    <div class="form-group">
+                        <label>Deposit Amount</label>
+                        <div class="input-wrapper">
+                            <span class="currency-prefix">${currencySymbol}</span>
+                            <input type="number" name="deposit_amount" 
+                                   step="0.01" min="0.01" placeholder="0.00" required
+                                   id="depositAmountInput">
+                        </div>
+                    </div>
+                    
+                    <div class="deposit-summary">
+                        <div class="label">Minimum deposit allowed</div>
+                        <div class="value">${currencySymbol}${parseFloat(option.amount || 0).toFixed(2)}</div>
+                    </div>
+                    
+                    <button type="submit" class="btn-primary">Continue →</button>
+                </form>
+            `;
+            
+            container.innerHTML = html;
+            
+            setTimeout(() => {
+                document.getElementById('depositAmountInput')?.focus();
+            }, 100);
+        }
+
+        function showDepositDetails(event, index) {
+            event.preventDefault();
+            
+            const option = paymentOptions[index];
+            if (!option) return;
+            
+            const amountInput = document.getElementById('depositAmountInput');
+            const amount = parseFloat(amountInput.value);
+            
+            if (!amount || amount <= 0) {
+                alert('Please enter a valid deposit amount');
+                return false;
+            }
+            
+            const minAmount = parseFloat(option.amount || 0);
+            if (amount < minAmount) {
+                alert(`Minimum deposit amount is ${currencySymbol}${minAmount.toFixed(2)}`);
+                return false;
+            }
+            
+            const amountView = document.getElementById('depositAmountView');
+            const detailView = document.getElementById('depositDetailView');
+            if (amountView) amountView.classList.remove('active');
+            if (detailView) detailView.classList.add('active');
+            
+            const container = document.getElementById('depositDetailContent');
+            if (!container) return;
+            
+            let detailsHtml = `
+                <div style="margin-bottom:16px; padding:12px; background:var(--accent-light); border-radius:10px; border:1px solid var(--border-color);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <span style="font-weight:600; color:var(--text-secondary);">Amount to Deposit:</span>
+                        <span style="font-size:24px; font-weight:700; color:var(--accent-color);">${currencySymbol}${amount.toFixed(2)}</span>
+                    </div>
+                </div>
+                
+                <div class="payment-detail-card">
+                    <h4 style="margin-bottom:12px; color:var(--text-primary);">${option.payment_receiver.replace('_', ' ').toUpperCase()} Payment Details</h4>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Payment Type:</span>
+                        <span class="payment-detail-value">${option.payment_type.toUpperCase()}</span>
+                        <button class="copy-btn" onclick="copyText('${option.payment_type}')">Copy</button>
+                    </div>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Payment Value:</span>
+                        <span class="payment-detail-value">${option.payment_value}</span>
+                        <button class="copy-btn" onclick="copyText('${option.payment_value}')">Copy</button>
+                    </div>
+                    
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Receiver:</span>
+                        <span class="payment-detail-value">${option.payment_receiver.replace('_', ' ').toUpperCase()}</span>
+                        <button class="copy-btn" onclick="copyText('${option.payment_receiver}')">Copy</button>
+                    </div>
+                    
+                    <div class="payment-detail-row" style="background:var(--accent-light); border-radius:8px; margin:8px 0;">
+                        <span class="payment-detail-label" style="font-weight:700;">Your Deposit Amount:</span>
+                        <span class="payment-detail-value" style="font-weight:700; font-size:18px; color:var(--accent-color);">${currencySymbol}${amount.toFixed(2)}</span>
+                        <button class="copy-btn" onclick="copyText('${amount.toFixed(2)}')">Copy</button>
+                    </div>
+            `;
+            
+            if (option.description) {
+                detailsHtml += `
+                    <div class="payment-detail-row">
+                        <span class="payment-detail-label">Description:</span>
+                        <span class="payment-detail-value">${option.description}</span>
+                        <button class="copy-btn" onclick="copyText('${option.description.replace(/'/g, "\\'")}')">Copy</button>
+                    </div>
+                `;
+            }
+            
+            detailsHtml += `
+                    <div class="payment-detail-row" style="border-bottom:none; padding-top:16px;">
+                        <span style="font-size:13px; color:var(--text-muted);">After payment, click the button below to record your deposit.</span>
+                    </div>
+                </div>
+                
+                <form method="POST" style="margin-top:16px;">
+                    <input type="hidden" name="deposit_id" value="${option.id}">
+                    <input type="hidden" name="deposit_amount" value="${amount}">
+                    <input type="hidden" name="payment_type" value="${option.payment_type}">
+                    <input type="hidden" name="payment_value" value="${option.payment_value}">
+                    <input type="hidden" name="payment_receiver" value="${option.payment_receiver}">
+                    <input type="hidden" name="description" value="${option.description || ''}">
+                    
+                    <button type="submit" name="process_deposit" class="btn-primary" style="background:var(--success-color);">
+                        I Have Made the Deposit
+                    </button>
+                </form>
+            `;
+            
+            container.innerHTML = detailsHtml;
+            
+            return false;
+        }
+
+        function resetDepositViews() {
+            const gridView = document.getElementById('depositGridView');
+            const amountView = document.getElementById('depositAmountView');
+            const detailView = document.getElementById('depositDetailView');
+            if (gridView) gridView.classList.add('active');
+            if (amountView) amountView.classList.remove('active');
+            if (detailView) detailView.classList.remove('active');
+        }
+
+        // ============================================================
+        // ===== PASSKEY MODAL =====
+        // ============================================================
+        let passkeyValue = '';
+        let pendingForm = null;
+
+        function openPasskeyModal() {
+            if (!hasPasskey) {
+                submitFormDirectly();
+                return;
+            }
+            
+            passkeyValue = '';
+            const dots = document.getElementById('passkeyDots');
+            const error = document.getElementById('passkeyError');
+            const input = document.getElementById('passkeyInput');
+            const modal = document.getElementById('passkeyModal');
+            
+            if (dots) dots.textContent = '······';
+            if (dots) dots.className = 'passkey-dots';
+            if (error) error.textContent = '';
+            if (input) input.value = '';
+            if (modal) modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closePasskeyModal() {
+            const modal = document.getElementById('passkeyModal');
+            if (modal) modal.classList.remove('active');
+            document.body.style.overflow = 'auto';
+            pendingForm = null;
+            passkeyValue = '';
+        }
+
+        function pressKey(num) {
+            if (passkeyValue.length < 6) {
+                passkeyValue += num;
+                updatePasskeyDisplay();
+            }
+        }
+
+        function backspacePasskey() {
+            passkeyValue = passkeyValue.slice(0, -1);
+            updatePasskeyDisplay();
+        }
+
+        function clearPasskey() {
+            passkeyValue = '';
+            updatePasskeyDisplay();
+        }
+
+        function updatePasskeyDisplay() {
+            const display = document.getElementById('passkeyDots');
+            const input = document.getElementById('passkeyInput');
+            const error = document.getElementById('passkeyError');
+            
+            if (!display) return;
+            
+            let dots = '';
+            for (let i = 0; i < 6; i++) {
+                dots += i < passkeyValue.length ? '●' : '·';
+            }
+            display.textContent = dots;
+            if (input) input.value = passkeyValue;
+            
+            display.className = 'passkey-dots';
+            if (error) error.textContent = '';
+        }
+
+        function submitPasskey() {
+            if (passkeyValue.length !== 6) {
+                const display = document.getElementById('passkeyDots');
+                const error = document.getElementById('passkeyError');
+                if (display) {
+                    display.className = 'passkey-dots shake';
+                    setTimeout(() => {
+                        display.className = 'passkey-dots';
+                    }, 500);
+                }
+                if (error) error.textContent = 'Please enter exactly 6 digits';
+                return;
+            }
+            
+            const form = pendingForm;
+            if (form) {
+                const passkeyInput = document.createElement('input');
+                passkeyInput.type = 'hidden';
+                passkeyInput.name = 'passkey';
+                passkeyInput.value = passkeyValue;
+                form.appendChild(passkeyInput);
+                
+                closePasskeyModal();
+                form.submit();
+            }
+        }
+
+        function submitFormDirectly() {
+            const form = pendingForm;
+            if (form) {
+                const passkeyInput = document.createElement('input');
+                passkeyInput.type = 'hidden';
+                passkeyInput.name = 'passkey';
+                passkeyInput.value = '';
+                form.appendChild(passkeyInput);
+                form.submit();
+            }
+        }
+
+        // ============================================================
+        // ===== RECEIPT MODAL =====
+        // ============================================================
+        const receipts = <?php echo json_encode($payment_receipts); ?>;
+
+        function openReceiptModal() {
+            const modal = document.getElementById('receiptModal');
+            const list = document.getElementById('receiptList');
+            
+            if (!modal || !list) return;
+            
+            if (receipts.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📭</div>
+                        <p>No payment receipts available</p>
+                    </div>
+                `;
+            } else {
+                let html = '';
+                receipts.forEach((receipt, index) => {
+                    const date = new Date(receipt.paid_date || receipt.created_at);
+                    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const status = receipt.status || 'pending';
+                    const statusClass = status.toLowerCase();
+                    
+                    html += `
+                        <div class="receipt-item" onclick="showReceiptDetail(${index})">
+                            <div class="receipt-header">
+                                <span class="receipt-date">${dateStr}</span>
+                                <span class="receipt-amount">${currencySymbol}${parseFloat(receipt.amount_paid || 0).toFixed(2)}</span>
+                            </div>
+                            <div class="receipt-subject">${receipt.payment_subject || 'Payment'}</div>
+                            <div style="margin-top:6px;">
+                                <span class="receipt-status ${statusClass}">${status.toUpperCase()}</span>
+                                ${receipt.reference_number ? `<span style="font-size:12px; color:var(--text-muted); margin-left:10px;">#${receipt.reference_number}</span>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                list.innerHTML = html;
+            }
+            
+            modal.classList.add('active');
+        }
+
+        function showReceiptDetail(index) {
+            const receipt = receipts[index];
+            if (!receipt) return;
+            
+            const date = new Date(receipt.paid_date || receipt.created_at);
+            const dateStr = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            
+            const list = document.getElementById('receiptList');
+            if (!list) return;
+            
+            let details = `
+                <div style="background:var(--input-bg); border-radius:12px; padding:16px; margin-top:16px;">
+                    <h4 style="color:var(--text-primary); margin-bottom:12px;">Receipt Details</h4>
+                    <div class="payment-detail-row"><span class="payment-detail-label">Date:</span><span class="payment-detail-value">${dateStr}</span></div>
+                    <div class="payment-detail-row"><span class="payment-detail-label">Amount:</span><span class="payment-detail-value" style="font-weight:600;">${currencySymbol}${parseFloat(receipt.amount_paid || 0).toFixed(2)}</span></div>
+                    ${receipt.payment_subject ? `<div class="payment-detail-row"><span class="payment-detail-label">Subject:</span><span class="payment-detail-value">${receipt.payment_subject}</span></div>` : ''}
+                    ${receipt.payer_name ? `<div class="payment-detail-row"><span class="payment-detail-label">Payer:</span><span class="payment-detail-value">${receipt.payer_name}</span></div>` : ''}
+                    ${receipt.receiver_name ? `<div class="payment-detail-row"><span class="payment-detail-label">Receiver:</span><span class="payment-detail-value">${receipt.receiver_name}</span></div>` : ''}
+                    ${receipt.reference_number ? `<div class="payment-detail-row"><span class="payment-detail-label">Reference:</span><span class="payment-detail-value">${receipt.reference_number}</span></div>` : ''}
+                    ${receipt.status ? `<div class="payment-detail-row"><span class="payment-detail-label">Status:</span><span class="payment-detail-value" style="text-transform:uppercase; font-weight:600;">${receipt.status}</span></div>` : ''}
+                    ${receipt.notes ? `<div class="payment-detail-row" style="border-bottom:none;"><span class="payment-detail-label">Notes:</span><span class="payment-detail-value" style="text-align:left;">${receipt.notes}</span></div>` : ''}
+                </div>
+                <button class="receipt-close-btn" onclick="openReceiptModal()" style="margin-top:12px;">← Back to Receipts</button>
+            `;
+            
+            list.innerHTML = details;
+        }
+
+        function closeReceiptModal() {
+            const modal = document.getElementById('receiptModal');
+            if (modal) modal.classList.remove('active');
+        }
+
+        document.getElementById('receiptModal')?.addEventListener('click', function(e) {
+            if (e.target === this) closeReceiptModal();
+        });
+
+        // ============================================================
+        // ===== UTILITY FUNCTIONS =====
+        // ============================================================
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function copyText(text) {
+            const temp = document.createElement('input');
+            temp.value = text;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
+            
+            // Find the clicked button
+            const btn = event && event.target ? event.target : document.activeElement;
+            if (btn && btn.classList) {
+                const original = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = original;
+                    btn.classList.remove('copied');
+                }, 2000);
+            }
+        }
+
+        function showNotification(msg, type) {
+            const notify = document.getElementById('notify');
+            if (!notify) return;
+            notify.textContent = msg;
+            notify.className = type || '';
+            notify.style.display = 'block';
+            setTimeout(() => {
+                notify.style.display = 'none';
+            }, 5000);
+        }
+
+        // ============================================================
+        // ===== KEYBOARD SHORTCUTS =====
+        // ============================================================
+        document.addEventListener('keydown', function(e) {
+            const passkeyModal = document.getElementById('passkeyModal');
+            if (passkeyModal && passkeyModal.classList.contains('active')) {
+                if (e.key >= '0' && e.key <= '9') {
+                    e.preventDefault();
+                    pressKey(e.key);
+                } else if (e.key === 'Backspace') {
+                    e.preventDefault();
+                    backspacePasskey();
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitPasskey();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closePasskeyModal();
+                }
+            }
+            
+            if (e.key === 'Escape') {
+                const receiptModal = document.getElementById('receiptModal');
+                if (receiptModal && receiptModal.classList.contains('active')) {
+                    closeReceiptModal();
+                }
+            }
+        });
+
+        <?php if ($passkey_error): ?>
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Passkey error occurred - showing notification only');
+        });
+        <?php endif; ?>
+        
+        // Reset withdraw views when switching away from transfer tab
+        document.querySelectorAll('.tab-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                if (this.dataset.tab !== 'transfer') {
+                    resetWithdrawViews();
+                }
+            });
+        });
+        
+        // Ensure sub-tabs work properly on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Make sure default sub-tab is active
+            const defaultSubTab = document.querySelector('.sub-tab-btn.active');
+            if (defaultSubTab) {
+                const subtab = defaultSubTab.dataset.subtab;
+                const target = document.getElementById('subtab-' + subtab);
+                if (target) {
+                    document.querySelectorAll('.sub-tab-content').forEach(el => el.classList.remove('active'));
+                    target.classList.add('active');
+                }
+            }
+        });
+    </script>
+</body>
+</html>
