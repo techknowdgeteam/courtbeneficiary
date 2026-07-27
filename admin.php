@@ -342,7 +342,7 @@ if (isset($_POST['update_user_direct'])) {
     $username = $_POST['username'];
     $email = $_POST['email'];
     $portal_name = $_POST['portal_name'] ?? null;
-    $theme_mode = 'white'; // Always white for admin
+    $theme_mode = $_POST['theme_mode'] ?? 'white'; // Get theme mode from form
     $passkey = !empty($_POST['passkey']) ? $_POST['passkey'] : null;
     
     try {
@@ -2919,6 +2919,26 @@ function shouldDisplayBucket($bucket_name, $dont_display_buckets) {
             border-radius: 10px;
             margin-left: 8px;
         }
+        /* Theme preview indicator */
+        .theme-preview {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .theme-preview.light {
+            background: #f7fafc;
+            color: #2d3748;
+            border: 1px solid #e2e8f0;
+        }
+        .theme-preview.dark {
+            background: #2d3748;
+            color: #f7fafc;
+            border: 1px solid #4a5568;
+        }
 </style>
 </head>
 <body>
@@ -3255,47 +3275,92 @@ function shouldDisplayBucket($bucket_name, $dont_display_buckets) {
             <!-- ===== PROFILE CARD ===== -->
             <div id="view-profile" class="card-view">
                 <div class="detail-card">
-                    <div class="card-title">👤 Edit Profile</div>
+                    <div class="card-title">👤 Edit Profile <span class="badge">UID #<?php echo $target_user; ?></span></div>
+                    
                     <form method="POST">
                         <input type="hidden" name="user_id" value="<?php echo $selected_user['id']; ?>">
+                        
+                        <!-- Personal Information -->
+                        <h4 style="font-size:15px; font-weight:600; color:#4a5568; margin-bottom:12px;">📋 Personal Information</h4>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Full Name</label>
+                                <label>Full Name *</label>
                                 <input type="text" name="full_name" value="<?php echo htmlspecialchars($selected_user['full_name']); ?>" required>
                             </div>
                             <div class="form-group">
-                                <label>Username</label>
+                                <label>Username *</label>
                                 <input type="text" name="username" value="<?php echo htmlspecialchars($selected_user['username']); ?>" required>
                             </div>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Email Address</label>
+                                <label>Email Address *</label>
                                 <input type="email" name="email" value="<?php echo htmlspecialchars($selected_user['email']); ?>" required>
                             </div>
                             <div class="form-group">
                                 <label>Portal Name</label>
                                 <input type="text" name="portal_name" value="<?php echo htmlspecialchars($selected_user['portal_name'] ?? ''); ?>" placeholder="Portal Name">
+                                <div class="text-muted text-sm">Display name shown in the portal header</div>
                             </div>
                         </div>
+                        
+                        <!-- Security & Theme Settings -->
+                        <h4 style="font-size:15px; font-weight:600; color:#4a5568; margin:20px 0 12px;">🔐 Security & Theme Settings</h4>
                         <div class="form-row">
                             <div class="form-group">
-                                <label>New Password <span class="text-muted text-sm">(leave blank to keep current)</span></label>
-                                <input type="password" name="password" placeholder="Enter new password">
+                                <label>New Password</label>
+                                <input type="password" name="password" placeholder="Enter new password (leave blank to keep current)">
+                                <div class="text-muted text-sm">Must be at least 8 characters</div>
                             </div>
+                            <div class="form-group">
+                                <label>Theme Mode</label>
+                                <select name="theme_mode" required style="padding:10px 14px; border:1px solid #e2e8f0; border-radius:8px; width:100%;">
+                                    <option value="white" <?php echo ($selected_user['theme_mode'] ?? 'white') == 'white' ? 'selected' : ''; ?>>☀️ Light Mode</option>
+                                    <option value="dark" <?php echo ($selected_user['theme_mode'] ?? 'white') == 'dark' ? 'selected' : ''; ?>>🌙 Dark Mode</option>
+                                </select>
+                                <div class="text-muted text-sm">Select the default theme for this user's dashboard</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Passkey -->
+                        <div class="form-row" style="margin-top:8px;">
                             <div class="form-group">
                                 <label>Passkey (6 digits)</label>
                                 <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                                    <input type="text" id="profilePasskeyDisplay" placeholder="6-digit passkey" maxlength="6" pattern="[0-9]*" readonly style="flex:1; background:#f7fafc;">
-                                    <button type="button" onclick="openPasskeyModal()" class="btn btn-purple" style="width:auto;">Set Passkey</button>
-                                    <button type="button" onclick="clearProfilePasskey()" class="btn btn-danger" style="width:auto;">Clear</button>
+                                    <input type="text" id="profilePasskeyDisplay" placeholder="6-digit passkey" maxlength="6" pattern="[0-9]*" readonly style="flex:1; background:#f7fafc; padding:10px 14px; border:1px solid #e2e8f0; border-radius:8px; font-family:'Courier New',monospace; letter-spacing:4px;">
+                                    <button type="button" onclick="openPasskeyModal()" class="btn btn-purple" style="white-space:nowrap;">🔑 Set Passkey</button>
+                                    <button type="button" onclick="clearProfilePasskey()" class="btn btn-danger" style="white-space:nowrap;">🗑️ Clear</button>
                                 </div>
                                 <input type="hidden" name="passkey" id="profilePasskeyHidden" value="">
-                                <div class="text-muted text-sm mt-10">Enter a 6-digit numeric passkey for user login</div>
+                                <div class="text-muted text-sm mt-10">Enter a 6-digit numeric passkey for user login (e.g., 123456)</div>
                             </div>
                         </div>
+                        
+                        <!-- Account Info Display -->
+                        <div style="background:#f7fafc; border-radius:12px; padding:16px; margin:20px 0 16px; display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:12px;">
+                            <div>
+                                <span style="font-weight:600; color:#4a5568; font-size:13px;">User ID:</span>
+                                <span style="font-weight:700; color:#2d3748;">#<?php echo $selected_user['id']; ?></span>
+                            </div>
+                            <div>
+                                <span style="font-weight:600; color:#4a5568; font-size:13px;">Created:</span>
+                                <span style="color:#2d3748;"><?php echo date('M d, Y', strtotime($selected_user['created_at'])); ?></span>
+                            </div>
+                            <div>
+                                <span style="font-weight:600; color:#4a5568; font-size:13px;">Passkey Status:</span>
+                                <span class="status-badge <?php echo !empty($selected_user['passkey']) ? 'status-completed' : 'status-pending'; ?>" style="font-size:12px;">
+                                    <?php echo !empty($selected_user['passkey']) ? '✅ Set' : '🔓 Not Set'; ?>
+                                </span>
+                            </div>
+                            <div>
+                                <span style="font-weight:600; color:#4a5568; font-size:13px;">Current Theme:</span>
+                                <span style="font-weight:600; color:#2d3748;"><?php echo ucfirst($selected_user['theme_mode'] ?? 'white'); ?></span>
+                            </div>
+                        </div>
+                        
                         <div class="btn-group">
-                            <button type="submit" name="update_user_direct" class="btn btn-primary">Save Changes</button>
+                            <button type="submit" name="update_user_direct" class="btn btn-primary" style="padding:12px 40px;">💾 Save All Changes</button>
+                            <button type="button" onclick="window.location.href='<?php echo $_SERVER['PHP_SELF']; ?>?uid=<?php echo $target_user; ?>'" class="btn btn-dark">Cancel</button>
                         </div>
                     </form>
                 </div>

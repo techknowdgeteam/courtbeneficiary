@@ -635,30 +635,34 @@ if (isset($login_error)) {
             --card-shadow: 0 2px 12px rgba(0,0,0,0.04);
             --header-gradient-start: #1a1a2e;
             --header-gradient-end: #2d6a4f;
+            --glass-bg: rgba(255,255,255,0.08);
+            --glass-border: rgba(255,255,255,0.12);
         }
         
         [data-theme="dark"] {
-            --bg-primary: #0f0f1a;
-            --bg-secondary: #1a1a2e;
-            --bg-card: #1e1e32;
+            --bg-primary: #0a0a12;
+            --bg-secondary: #0f0f1e;
+            --bg-card: rgba(18, 18, 35, 0.85);
             --text-primary: #e8e8f0;
             --text-secondary: #b0b0c8;
             --text-muted: #707090;
-            --border-color: #2a2a44;
-            --shadow-color: rgba(0,0,0,0.3);
+            --border-color: rgba(255,255,255,0.06);
+            --shadow-color: rgba(0,0,0,0.4);
             --accent-color: #4caf7a;
             --accent-hover: #66d09a;
-            --accent-light: #1a2e24;
+            --accent-light: rgba(76, 175, 122, 0.12);
             --danger-color: #ef5350;
             --success-color: #4caf7a;
-            --tab-bg: #1a1a2e;
+            --tab-bg: rgba(15, 15, 30, 0.95);
             --tab-active: #4caf7a;
             --tab-inactive: #707090;
-            --input-bg: #2a2a44;
-            --modal-overlay: rgba(0,0,0,0.7);
-            --card-shadow: 0 2px 12px rgba(0,0,0,0.2);
+            --input-bg: rgba(255,255,255,0.04);
+            --modal-overlay: rgba(0,0,0,0.8);
+            --card-shadow: 0 8px 32px rgba(0,0,0,0.3);
             --header-gradient-start: #0a0a15;
-            --header-gradient-end: #1a2e24;
+            --header-gradient-end: #1a3a2a;
+            --glass-bg: rgba(255,255,255,0.04);
+            --glass-border: rgba(255,255,255,0.06);
         }
         
         html, body {
@@ -668,9 +672,23 @@ if (isset($login_error)) {
             background: var(--bg-primary);
             color: var(--text-primary);
             line-height: 1.6;
-            transition: background 0.3s, color 0.3s;
+            transition: background 0.4s ease, color 0.4s ease;
             height: 100%;
             overflow: hidden;
+        }
+        
+        /* Custom Scrollbar - Dark Mode Enhanced */
+        .custom-body::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .custom-body::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        .custom-body::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, var(--accent-color), var(--accent-hover));
+            border-radius: 3px;
         }
         
         .custom-body {
@@ -685,29 +703,27 @@ if (isset($login_error)) {
             -webkit-overflow-scrolling: touch;
         }
         
-        .custom-body::-webkit-scrollbar {
-            width: 4px;
+        [data-theme="dark"] .custom-body {
+            background: radial-gradient(ellipse at 50% 0%, #141428 0%, #0a0a12 100%);
         }
         
-        .custom-body::-webkit-scrollbar-track {
-            background: var(--bg-primary);
-        }
-        
-        .custom-body::-webkit-scrollbar-thumb {
-            background: var(--accent-color);
-            border-radius: 2px;
-        }
-        
-        /* Login Container */
+        /* Login Container - Dark Mode Enhanced */
         .login-container {
             background: var(--bg-card);
             padding: 40px;
-            border-radius: 12px;
+            border-radius: 16px;
             box-shadow: var(--card-shadow);
             width: 100%;
             max-width: 420px;
             margin: 40px auto;
             border: 1px solid var(--border-color);
+            backdrop-filter: blur(20px);
+        }
+        
+        [data-theme="dark"] .login-container {
+            background: rgba(18, 18, 35, 0.9);
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
         }
         
         .login-container h2 {
@@ -741,26 +757,33 @@ if (isset($login_error)) {
             color: var(--text-primary);
         }
         
+        [data-theme="dark"] .login-container input {
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.03);
+        }
+        
         .login-container input:focus {
             outline: none;
             border-color: var(--accent-color);
+            box-shadow: 0 0 0 4px rgba(76, 175, 122, 0.1);
         }
         
         .login-container button {
             width: 100%;
             padding: 14px;
-            background: var(--accent-color);
+            background: linear-gradient(135deg, var(--accent-color), var(--accent-hover));
             color: white;
             border: none;
             border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
         }
         
         .login-container button:hover {
-            background: var(--accent-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(76, 175, 122, 0.3);
         }
         
         .login-footer {
@@ -778,10 +801,10 @@ if (isset($login_error)) {
             padding-bottom: 20px;
         }
         
-        /* Header */
+        /* Header - Enhanced Gradient */
         .dashboard-header {
-            background: linear-gradient(135deg, var(--header-gradient-start) 0%, var(--header-gradient-end) 100%);
-            border-radius: 16px;
+            background: linear-gradient(145deg, var(--header-gradient-start) 0%, var(--header-gradient-end) 100%);
+            border-radius: 20px;
             padding: 24px 30px;
             margin-bottom: 24px;
             display: flex;
@@ -789,10 +812,14 @@ if (isset($login_error)) {
             align-items: center;
             flex-wrap: wrap;
             gap: 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
             border: none;
             position: relative;
             overflow: hidden;
+        }
+        
+        [data-theme="dark"] .dashboard-header {
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         }
         
         .dashboard-header::before {
@@ -802,7 +829,19 @@ if (isset($login_error)) {
             right: -20%;
             width: 300px;
             height: 300px;
-            background: rgba(255,255,255,0.03);
+            background: rgba(255,255,255,0.05);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        .dashboard-header::after {
+            content: '';
+            position: absolute;
+            bottom: -30%;
+            left: -10%;
+            width: 200px;
+            height: 200px;
+            background: rgba(76, 175, 122, 0.08);
             border-radius: 50%;
             pointer-events: none;
         }
@@ -817,13 +856,14 @@ if (isset($login_error)) {
         .dashboard-header .header-icon {
             width: 48px;
             height: 48px;
-            background: rgba(255,255,255,0.15);
-            border-radius: 12px;
+            background: rgba(255,255,255,0.12);
+            border-radius: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 24px;
             backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.08);
         }
         
         .dashboard-header .header-text h1 {
@@ -832,6 +872,7 @@ if (isset($login_error)) {
             color: #ffffff;
             margin: 0;
             letter-spacing: 0.3px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
         .dashboard-header .header-text .header-sub {
@@ -853,17 +894,18 @@ if (isset($login_error)) {
             display: flex;
             align-items: center;
             gap: 10px;
-            background: rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.1);
             padding: 8px 16px 8px 12px;
             border-radius: 30px;
             backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.06);
         }
         
         .dashboard-header .user-avatar {
             width: 32px;
             height: 32px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.15);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -880,9 +922,9 @@ if (isset($login_error)) {
         
         .btn-logout {
             padding: 8px 18px;
-            background: rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.1);
             color: #ffffff;
-            border: 1px solid rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.15);
             border-radius: 30px;
             cursor: pointer;
             font-size: 13px;
@@ -892,18 +934,32 @@ if (isset($login_error)) {
         }
         
         .btn-logout:hover {
-            background: rgba(255,255,255,0.25);
+            background: rgba(255,255,255,0.2);
+            transform: translateY(-2px);
         }
         
-        /* Cards */
+        /* Cards - Glassmorphism for Dark Mode */
         .card {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 12px;
+            border-radius: 16px;
             padding: 20px;
             margin-bottom: 20px;
             box-shadow: var(--card-shadow);
-            transition: background 0.3s, border-color 0.3s;
+            transition: all 0.4s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        [data-theme="dark"] .card {
+            background: rgba(18, 18, 35, 0.7);
+            border: 1px solid rgba(255,255,255,0.04);
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        }
+        
+        [data-theme="dark"] .card:hover {
+            border-color: rgba(255,255,255,0.08);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.3);
         }
         
         .card-title {
@@ -914,7 +970,11 @@ if (isset($login_error)) {
             letter-spacing: 0.3px;
         }
         
-        /* Balance Section */
+        [data-theme="dark"] .card-title {
+            color: #b0b0c8;
+        }
+        
+        /* Balance Section - Enhanced Cards */
         .balance-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -930,9 +990,31 @@ if (isset($login_error)) {
         .balance-item {
             text-align: center;
             padding: 24px;
+            border-radius: 14px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        [data-theme="light"] .balance-item {
             background: var(--accent-light);
-            border-radius: 12px;
             border: 1px solid var(--border-color);
+        }
+        
+        [data-theme="dark"] .balance-item {
+            background: linear-gradient(145deg, rgba(76, 175, 122, 0.08), rgba(76, 175, 122, 0.02));
+            border: 1px solid rgba(76, 175, 122, 0.1);
+        }
+        
+        [data-theme="dark"] .balance-item::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(76, 175, 122, 0.03), transparent 70%);
+            pointer-events: none;
         }
         
         .balance-item .label {
@@ -950,12 +1032,19 @@ if (isset($login_error)) {
             margin: 8px 0 4px;
         }
         
+        [data-theme="dark"] .balance-item .amount {
+            background: linear-gradient(135deg, #e8e8f0, #b0b0c8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
         .balance-item .desc {
             font-size: 13px;
             color: var(--text-muted);
         }
         
-        /* Tabs */
+        /* Tabs - Dark Mode Enhanced */
         .tab-container {
             position: fixed;
             bottom: 0;
@@ -966,8 +1055,15 @@ if (isset($login_error)) {
             display: flex;
             padding: 6px 0 env(safe-area-inset-bottom, 6px) 0;
             z-index: 1000;
-            box-shadow: 0 -2px 12px var(--shadow-color);
-            transition: background 0.3s, border-color 0.3s;
+            box-shadow: 0 -4px 20px var(--shadow-color);
+            transition: all 0.4s ease;
+            backdrop-filter: blur(20px);
+        }
+        
+        [data-theme="dark"] .tab-container {
+            background: rgba(15, 15, 30, 0.9);
+            border-top: 1px solid rgba(255,255,255,0.04);
+            backdrop-filter: blur(20px);
         }
         
         .tab-btn {
@@ -980,7 +1076,7 @@ if (isset($login_error)) {
             color: var(--tab-inactive);
             font-size: 11px;
             font-weight: 500;
-            transition: color 0.3s;
+            transition: all 0.3s ease;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -991,6 +1087,11 @@ if (isset($login_error)) {
         .tab-btn .tab-icon {
             font-size: 22px;
             line-height: 1;
+            transition: transform 0.3s ease;
+        }
+        
+        .tab-btn:hover .tab-icon {
+            transform: scale(1.1);
         }
         
         .tab-btn .tab-label {
@@ -1009,7 +1110,7 @@ if (isset($login_error)) {
             left: 30%;
             right: 30%;
             height: 3px;
-            background: var(--tab-active);
+            background: linear-gradient(90deg, var(--accent-color), var(--accent-hover));
             border-radius: 0 0 3px 3px;
         }
         
@@ -1019,14 +1120,14 @@ if (isset($login_error)) {
         
         .tab-content {
             display: none;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.4s ease;
         }
         
         .tab-content.active {
             display: block;
         }
         
-        /* Sub-tabs for Transactions */
+        /* Sub-tabs */
         .sub-tabs {
             display: flex;
             gap: 8px;
@@ -1051,10 +1152,20 @@ if (isset($login_error)) {
             min-width: 100px;
         }
         
+        [data-theme="dark"] .sub-tab-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        
         .sub-tab-btn.active {
             border-color: var(--accent-color);
             background: var(--accent-light);
             color: var(--accent-color);
+        }
+        
+        [data-theme="dark"] .sub-tab-btn.active {
+            background: rgba(76, 175, 122, 0.15);
+            border-color: rgba(76, 175, 122, 0.3);
         }
         
         .sub-tab-btn:hover {
@@ -1063,7 +1174,7 @@ if (isset($login_error)) {
         
         .sub-tab-content {
             display: none;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.4s ease;
             padding-top: 8px;
         }
         
@@ -1072,14 +1183,14 @@ if (isset($login_error)) {
         }
         
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(8px); }
+            from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
         
-        /* View containers for isolation */
+        /* View containers */
         .view-container {
             display: none;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.4s ease;
         }
         
         .view-container.active {
@@ -1109,10 +1220,20 @@ if (isset($login_error)) {
             min-width: 120px;
         }
         
+        [data-theme="dark"] .withdraw-sub-tab {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        
         .withdraw-sub-tab.active {
             border-color: var(--accent-color);
             background: var(--accent-light);
             color: var(--accent-color);
+        }
+        
+        [data-theme="dark"] .withdraw-sub-tab.active {
+            background: rgba(76, 175, 122, 0.15);
+            border-color: rgba(76, 175, 122, 0.3);
         }
         
         .withdraw-sub-tab:hover {
@@ -1121,6 +1242,7 @@ if (isset($login_error)) {
         
         .withdraw-sub-content {
             display: none;
+            animation: fadeIn 0.4s ease;
         }
         
         .withdraw-sub-content.active {
@@ -1147,7 +1269,7 @@ if (isset($login_error)) {
             border-radius: 12px;
             cursor: pointer;
             text-align: center;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
             color: var(--text-primary);
             font-size: 15px;
             font-weight: 500;
@@ -1156,10 +1278,20 @@ if (isset($login_error)) {
             align-items: center;
         }
         
+        [data-theme="dark"] .source-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        
         .source-btn:hover {
             border-color: var(--accent-color);
             background: var(--accent-light);
-            transform: translateY(-2px);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        }
+        
+        [data-theme="dark"] .source-btn:hover {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
         }
         
         .source-btn .source-icon {
@@ -1181,7 +1313,7 @@ if (isset($login_error)) {
             margin-top: 4px;
         }
         
-        /* Method Grid - Always 2 columns */
+        /* Method Grid */
         .method-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -1209,7 +1341,7 @@ if (isset($login_error)) {
             border-radius: 12px;
             cursor: pointer;
             text-align: center;
-            transition: all 0.3s;
+            transition: all 0.3s ease;
             color: var(--text-primary);
             font-size: 14px;
             font-weight: 500;
@@ -1220,10 +1352,20 @@ if (isset($login_error)) {
             justify-content: center;
         }
         
+        [data-theme="dark"] .method-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        
         .method-btn:hover {
             border-color: var(--accent-color);
             background: var(--accent-light);
-            transform: translateY(-2px);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        }
+        
+        [data-theme="dark"] .method-btn:hover {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
         }
         
         .method-btn .method-icon {
@@ -1267,9 +1409,15 @@ if (isset($login_error)) {
             margin-bottom: 16px;
         }
         
+        [data-theme="dark"] .back-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        
         .back-btn:hover {
             border-color: var(--accent-color);
             color: var(--text-primary);
+            transform: translateX(-4px);
         }
         
         /* Form fields */
@@ -1291,13 +1439,18 @@ if (isset($login_error)) {
             align-items: center;
             background: var(--input-bg);
             border-radius: 10px;
-            border: 1px solid transparent;
+            border: 1px solid var(--border-color);
             transition: all 0.3s;
+        }
+        
+        [data-theme="dark"] .form-group .input-wrapper {
+            border: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.03);
         }
         
         .form-group .input-wrapper:focus-within {
             border-color: var(--accent-color);
-            background: var(--input-bg);
+            box-shadow: 0 0 0 4px rgba(76, 175, 122, 0.1);
         }
         
         .form-group .input-wrapper .currency-prefix {
@@ -1337,30 +1490,33 @@ if (isset($login_error)) {
             cursor: pointer;
         }
         
-        .form-group select option {
-            padding: 8px;
+        [data-theme="dark"] .form-group select option {
+            background: #1a1a2e;
+            color: #e8e8f0;
         }
         
         .btn-primary {
             width: 100%;
             padding: 14px;
-            background: var(--accent-color);
+            background: linear-gradient(135deg, var(--accent-color), var(--accent-hover));
             color: white;
             border: none;
             border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
         }
         
         .btn-primary:hover {
-            background: var(--accent-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(76, 175, 122, 0.3);
         }
         
         .btn-primary:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+            transform: none;
         }
         
         /* User Search */
@@ -1375,6 +1531,11 @@ if (isset($login_error)) {
             align-items: center;
             flex-wrap: wrap;
             gap: 10px;
+        }
+        
+        [data-theme="dark"] .user-search-result {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
         }
         
         .user-search-result .user-info {
@@ -1403,13 +1564,19 @@ if (isset($login_error)) {
             background: var(--accent-light);
         }
         
+        [data-theme="dark"] .user-found {
+            border-color: rgba(76, 175, 122, 0.3);
+            background: rgba(76, 175, 122, 0.08);
+        }
+        
         .user-not-found {
             border-color: var(--danger-color);
             background: #fff5f5;
         }
         
         [data-theme="dark"] .user-not-found {
-            background: #2a1a1a;
+            background: rgba(239, 83, 80, 0.08);
+            border-color: rgba(239, 83, 80, 0.3);
         }
         
         .user-selected {
@@ -1418,8 +1585,8 @@ if (isset($login_error)) {
         }
         
         [data-theme="dark"] .user-selected {
-            background: #1a2a3a;
-            border-color: #4299e1;
+            background: rgba(66, 153, 225, 0.08);
+            border-color: rgba(66, 153, 225, 0.3);
         }
         
         /* Payment Detail Styles */
@@ -1428,6 +1595,11 @@ if (isset($login_error)) {
             border-radius: 12px;
             padding: 16px;
             border: 1px solid var(--border-color);
+        }
+        
+        [data-theme="dark"] .payment-detail-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
         }
         
         .payment-detail-row {
@@ -1470,13 +1642,14 @@ if (isset($login_error)) {
             cursor: pointer;
             font-size: 12px;
             font-weight: 500;
-            transition: background 0.3s;
+            transition: all 0.3s;
             white-space: nowrap;
             margin-left: 8px;
         }
         
         .copy-btn:hover {
             background: var(--accent-hover);
+            transform: scale(1.05);
         }
         
         .copy-btn.copied {
@@ -1500,6 +1673,7 @@ if (isset($login_error)) {
             align-items: center;
             justify-content: center;
             padding: 20px;
+            backdrop-filter: blur(8px);
         }
         
         #receiptModal.active {
@@ -1516,7 +1690,13 @@ if (isset($login_error)) {
             overflow-y: auto;
             border: 1px solid var(--border-color);
             box-shadow: 0 20px 60px var(--shadow-color);
-            animation: modalIn 0.3s ease;
+            animation: modalIn 0.4s ease;
+        }
+        
+        [data-theme="dark"] .receipt-modal-content {
+            background: rgba(18, 18, 35, 0.95);
+            border: 1px solid rgba(255,255,255,0.06);
+            backdrop-filter: blur(20px);
         }
         
         .receipt-modal-content::-webkit-scrollbar {
@@ -1536,12 +1716,17 @@ if (isset($login_error)) {
             padding: 16px;
             border-bottom: 1px solid var(--border-color);
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
             border-radius: 8px;
         }
         
         .receipt-item:hover {
             background: var(--accent-light);
+            transform: translateX(4px);
+        }
+        
+        [data-theme="dark"] .receipt-item:hover {
+            background: rgba(76, 175, 122, 0.06);
         }
         
         .receipt-item:last-child {
@@ -1591,12 +1776,12 @@ if (isset($login_error)) {
         }
         
         [data-theme="dark"] .receipt-status.completed {
-            background: #1a3a2a;
+            background: rgba(76, 175, 122, 0.2);
             color: #7acc9a;
         }
         
         [data-theme="dark"] .receipt-status.pending {
-            background: #3a2e1a;
+            background: rgba(255, 217, 112, 0.15);
             color: #ffd970;
         }
         
@@ -1605,18 +1790,19 @@ if (isset($login_error)) {
             width: 100%;
             padding: 12px;
             margin-top: 16px;
-            background: var(--accent-color);
+            background: linear-gradient(135deg, var(--accent-color), var(--accent-hover));
             color: white;
             border: none;
             border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
         }
         
         .receipt-close-btn:hover {
-            background: var(--accent-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(76, 175, 122, 0.3);
         }
         
         /* Empty state */
@@ -1644,12 +1830,19 @@ if (isset($login_error)) {
             border-radius: 12px;
             z-index: 4000;
             display: none;
-            animation: slideDown 0.3s ease;
+            animation: slideDown 0.4s ease;
             box-shadow: 0 10px 40px var(--shadow-color);
             max-width: 90vw;
             text-align: center;
             font-size: 15px;
             font-weight: 500;
+            backdrop-filter: blur(20px);
+        }
+        
+        [data-theme="dark"] #notify {
+            background: rgba(18, 18, 35, 0.95);
+            border: 1px solid rgba(255,255,255,0.06);
+            backdrop-filter: blur(20px);
         }
         
         #notify.success {
@@ -1698,6 +1891,10 @@ if (isset($login_error)) {
             margin-bottom: 16px;
         }
         
+        [data-theme="dark"] .max-withdrawal-info {
+            background: rgba(76, 175, 122, 0.06);
+        }
+        
         .withdrawal-message {
             color: var(--danger-color);
             font-weight: 500;
@@ -1706,18 +1903,19 @@ if (isset($login_error)) {
         .receipt-btn {
             display: inline-block;
             padding: 6px 16px;
-            background: var(--accent-color);
+            background: linear-gradient(135deg, var(--accent-color), var(--accent-hover));
             color: white;
             border: none;
             border-radius: 8px;
             cursor: pointer;
             font-size: 13px;
             font-weight: 500;
-            transition: background 0.3s;
+            transition: all 0.3s;
         }
         
         .receipt-btn:hover {
-            background: var(--accent-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(76, 175, 122, 0.3);
         }
         
         .amount-input {
@@ -1731,12 +1929,17 @@ if (isset($login_error)) {
             border-radius: 12px;
             color: var(--text-primary);
             width: 100%;
-            transition: background 0.3s;
+            transition: all 0.3s;
+        }
+        
+        [data-theme="dark"] .amount-input {
+            background: rgba(255,255,255,0.03);
         }
         
         .amount-input:focus {
             outline: none;
             background: var(--accent-light);
+            box-shadow: 0 0 0 4px rgba(76, 175, 122, 0.1);
         }
         
         .amount-input::placeholder {
@@ -1754,6 +1957,11 @@ if (isset($login_error)) {
             border: 1px solid var(--border-color);
         }
         
+        [data-theme="dark"] .deposit-summary {
+            background: rgba(76, 175, 122, 0.06);
+            border: 1px solid rgba(76, 175, 122, 0.1);
+        }
+        
         .deposit-summary .label {
             font-size: 13px;
             color: var(--text-secondary);
@@ -1764,6 +1972,13 @@ if (isset($login_error)) {
             font-size: 24px;
             font-weight: 700;
             color: var(--text-primary);
+        }
+        
+        [data-theme="dark"] .deposit-summary .value {
+            background: linear-gradient(135deg, #e8e8f0, #b0b0c8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
         
         .greeting-text {
@@ -1798,18 +2013,19 @@ if (isset($login_error)) {
         
         .logout-section .btn-logout-large {
             padding: 14px 40px;
-            background: var(--danger-color);
+            background: linear-gradient(135deg, var(--danger-color), #c0392b);
             color: white;
             border: none;
             border-radius: 10px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: opacity 0.3s;
+            transition: all 0.3s;
         }
         
         .logout-section .btn-logout-large:hover {
-            opacity: 0.85;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(239, 83, 80, 0.3);
         }
         
         .menu-section {
@@ -1823,13 +2039,17 @@ if (isset($login_error)) {
             padding: 14px 16px;
             border-radius: 10px;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: all 0.3s;
             color: var(--text-primary);
             text-decoration: none;
         }
         
         .menu-section .menu-item:hover {
             background: var(--accent-light);
+        }
+        
+        [data-theme="dark"] .menu-section .menu-item:hover {
+            background: rgba(76, 175, 122, 0.06);
         }
         
         .menu-section .menu-item .menu-icon {
@@ -1858,6 +2078,12 @@ if (isset($login_error)) {
             font-style: italic;
             word-break: break-word;
             width: 100%;
+            border-radius: 10px;
+        }
+        
+        [data-theme="dark"] .processing-note {
+            background: rgba(76, 175, 122, 0.04);
+            border: 1px solid rgba(76, 175, 122, 0.06);
         }
         
         .transaction-item {
@@ -1865,6 +2091,18 @@ if (isset($login_error)) {
             flex-direction: column;
             padding: 12px 0;
             border-bottom: 1px solid var(--border-color);
+            transition: all 0.3s;
+        }
+        
+        .transaction-item:hover {
+            background: var(--accent-light);
+            margin: 0 -12px;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        
+        [data-theme="dark"] .transaction-item:hover {
+            background: rgba(76, 175, 122, 0.03);
         }
         
         .transaction-item:last-child {
@@ -1899,12 +2137,24 @@ if (isset($login_error)) {
             color: #8b6b4d;
         }
         
+        [data-theme="dark"] .transaction-info .tx-status.pending {
+            color: #ffd970;
+        }
+        
         .transaction-info .tx-status.completed {
             color: #2d5a2d;
         }
         
+        [data-theme="dark"] .transaction-info .tx-status.completed {
+            color: #7acc9a;
+        }
+        
         .transaction-info .tx-status.processing {
             color: #2d5a7a;
+        }
+        
+        [data-theme="dark"] .transaction-info .tx-status.processing {
+            color: #7ab8cc;
         }
         
         .transaction-amount {
@@ -1967,6 +2217,7 @@ if (isset($login_error)) {
             align-items: center;
             justify-content: center;
             padding: 20px;
+            backdrop-filter: blur(8px);
         }
         
         .modal-overlay.active {
@@ -1981,7 +2232,13 @@ if (isset($login_error)) {
             width: 100%;
             border: 1px solid var(--border-color);
             box-shadow: 0 20px 60px var(--shadow-color);
-            animation: modalIn 0.3s ease;
+            animation: modalIn 0.4s ease;
+        }
+        
+        [data-theme="dark"] .passkey-modal .modal-content {
+            background: rgba(18, 18, 35, 0.95);
+            border: 1px solid rgba(255,255,255,0.06);
+            backdrop-filter: blur(20px);
         }
         
         .passkey-modal .modal-content h3 {
@@ -2007,7 +2264,7 @@ if (isset($login_error)) {
             margin: 10px 0;
             font-family: monospace;
             text-align: center;
-            transition: border-color 0.3s, box-shadow 0.3s;
+            transition: all 0.3s;
             color: var(--text-primary);
         }
         
@@ -2045,9 +2302,15 @@ if (isset($login_error)) {
             user-select: none;
         }
         
+        [data-theme="dark"] .passkey-modal .keypad-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        
         .passkey-modal .keypad-btn:hover {
             background: var(--accent-light);
             border-color: var(--accent-color);
+            transform: scale(1.05);
         }
         
         .passkey-modal .keypad-btn:active {
@@ -2110,12 +2373,14 @@ if (isset($login_error)) {
             order: 0;
         }
         
-        .passkey-modal .modal-btns .btn-primary.confirm {
-            order: 1;
-        }
-        
         .passkey-modal .modal-btns .btn-primary.cancel:hover {
             opacity: 0.85;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .passkey-modal .modal-btns .btn-primary.confirm {
+            order: 1;
         }
         
         /* Responsive */
@@ -2228,6 +2493,7 @@ if (isset($login_error)) {
             <!-- Login -->
             <div class="login-container">
                 <h2>🏦</h2>
+                <h2>Login to your Account</h2>
                 <form method="POST">
                     <div class="form-group">
                         <label>Username or Email</label>
@@ -2331,14 +2597,12 @@ if (isset($login_error)) {
                                             <span class="tx-status <?php echo $status_class; ?>"><?php echo $status_text; ?></span>
                                         </div>
                                     </div>
+                                    <div class="processing-note">
+                                        <span>⏱️</span> Please be advised: Transactions may show as pending for up to 10 business days due to mandatory holding periods required by federal banking regulations (12 CFR 229) and court-ordered verification procedures.
+                                    </div>
                                 <?php endforeach; ?>
                             </div>
                         <?php endif; ?>
-                    </div>
-                    
-                    <!-- Processing Note -->
-                    <div class="processing-note">
-                        <span>⏱️</span> Please be advised: Transactions may show as pending for up to 10 business days due to mandatory holding periods required by federal banking regulations (12 CFR 229) and court-ordered verification procedures.
                     </div>
                 </div>
 
@@ -2492,22 +2756,21 @@ if (isset($login_error)) {
                         <div class="card-title">Transaction History</div>
                         
                         <div class="sub-tabs">
-                            <button class="sub-tab-btn" data-subtab="withdrawals" onclick="switchSubTab('withdrawals')">Withdrawals</button>
+                            <button class="sub-tab-btn active" data-subtab="all" onclick="switchSubTab('all')">All Transactions</button>
                             <button class="sub-tab-btn" data-subtab="deposits" onclick="switchSubTab('deposits')">Deposits</button>
                         </div>
-                        
-                        <!-- WITHDRAWALS ONLY -->
-                        <div id="subtab-withdrawals" class="sub-tab-content">
-                            <?php if(empty($withdrawal_transactions)): ?>
+                        <!-- ALL TRANSACTIONS -->
+                        <div id="subtab-all" class="sub-tab-content active">
+                            <?php if(empty($transactions)): ?>
                                 <div class="empty-state">
                                     <div class="empty-icon">📭</div>
-                                    <p>No withdrawal transactions</p>
+                                    <p>No transactions recorded</p>
                                 </div>
                             <?php else: ?>
                                 <div class="transactions-container">
                                     <?php 
                                     $grouped = [];
-                                    foreach($withdrawal_transactions as $tx) {
+                                    foreach($transactions as $tx) {
                                         $date = strtotime($tx['transaction_date'] ?? 'now');
                                         $monthKey = date('Y-m', $date);
                                         $monthLabel = date('F Y', $date);
@@ -2520,15 +2783,19 @@ if (isset($login_error)) {
                                         <div class="month-group">
                                             <div class="month-label"><?php echo $month['label']; ?></div>
                                             <?php foreach($month['items'] as $tx): 
+                                                $is_withdrawal = in_array($tx['transaction_type'], ['external_transfer', 'refund']);
+                                                $is_deposit = in_array($tx['transaction_type'], ['deposit', 'credit']);
+                                                $amount_class = $is_withdrawal ? 'negative' : ($is_deposit ? 'positive' : '');
+                                                $amount_sign = $is_withdrawal ? '- ' : ($is_deposit ? '+ ' : '');
                                                 $status_text = $tx['status'] ?? 'Pending';
                                                 $status_class = strtolower($status_text);
                                             ?>
                                                 <div class="transaction-item">
-                                                    <div class="transaction-amount negative">
-                                                        -<?php echo htmlspecialchars($currency_symbol) . number_format($tx['amount'], 2); ?>
+                                                    <div class="transaction-amount <?php echo $amount_class; ?>">
+                                                        <?php echo $amount_sign . htmlspecialchars($currency_symbol) . number_format($tx['amount'], 2); ?>
                                                     </div>
                                                     <div class="transaction-info">
-                                                        <span class="tx-desc"><?php echo htmlspecialchars($tx['description'] ?? 'Withdrawal'); ?></span>
+                                                        <span class="tx-desc"><?php echo htmlspecialchars($tx['description'] ?? 'Transaction'); ?></span>
                                                         <span class="tx-date"><?php echo date('M d, Y', strtotime($tx['transaction_date'] ?? 'now')); ?></span>
                                                         <span class="tx-status <?php echo $status_class; ?>"><?php echo $status_text; ?></span>
                                                     </div>
@@ -2543,6 +2810,7 @@ if (isset($login_error)) {
                                 <span>⏱️</span> Please be advised: Transactions may show as pending for up to 10 business days due to mandatory holding periods required by federal banking regulations (12 CFR 229) and court-ordered verification procedures.
                             </div>
                         </div>
+                        
                         
                         <!-- DEPOSITS ONLY -->
                         <div id="subtab-deposits" class="sub-tab-content">
